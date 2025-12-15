@@ -1,83 +1,92 @@
 #!/usr/bin/env python
-from pyscf import gto, scf, dft, mp
-from pyscf.solvent import pcm
+from pyscf import gto, scf, dft, cc, solvent, mp
+from pyscf.hessian import thermo
+from pyscf.solvent import hsm
 import numpy
-import thermo_fd
 
-mol = gto.M(atom='''
-  O        0.000000   -0.000000    0.119491
-  H        0.000000   -0.752067   -0.477966
-  H        0.000000    0.752067   -0.477966
-''', unit='Ang', charge=0, spin=0, basis='cc-pvtz', verbose=4)
-mol.build()
+mol = gto.M(
+    atom = '''
+  O          -0.00308160220954      0.40897504460660      0.00000000000000
+  H           0.74912540253019     -0.19884520216613      0.00000000000000
+  H          -0.74604379032065     -0.21012984244046      0.00000000000000
+''',
+    basis   = 'cc-pvtz',
+    unit    = 'angstrom',
+    verbose = 4,
+)
 
-#HSM set up
-cavity_coords = mol.atom_coords(unit='B')
-pcm_obj = pcm.PCM(mol)
-pcm_obj.cavity_coords = cavity_coords
+pcm_obj = hsm.PCM(mol)
+pcm_obj.cavity_coords = mol.atom_coords(unit='B')
 pcm_obj.method        = 'C-PCM'
 pcm_obj.eps           = 80.1510
+pcm_obj.vdw_scale     = 1.4
 pcm_obj.lebedev_order = 17
 
 # Calculation level
 # Hartree-Fock
-#mf = scf.RHF(mol).PCM(pcm_obj)
-# DFT
-mf = dft.RKS(mol,xc='b3lypg-d3bj').PCM(pcm_obj)
-mf.kernel()
-# MP2
-#mf = scf.RHF(mol)
-#mf.kernel()
-#mymp = mp.MP2(mf).PCM(pcm_obj)
+#mymp = scf.RHF(mol).PCM(pcm_obj)
 #mymp.kernel()
+# DFT
+#mymp = dft.RKS(mol,xc='b3lypg').PCM(pcm_obj)
+#mymp.kernel()
+# MP2
+mf = scf.RHF(mol)
+mf.kernel()
+mymp = mp.MP2(mf).PCM(pcm_obj)
+mymp.kernel()
 
-def gradient_scanner(mf):
-    grad_drv = mf.nuc_grad_method().as_scanner()
-    pcm_obj  = getattr(mf, 'with_solvent', None)
+def fd_hessian(mymp, step=5e-3):
+    mol = mymp.mol
+    g = mymp.nuc_grad_method()
+    g.kernel()
+    g_scan = g.as_scanner()
 
-    def grad_at(coords_bohr):
-        displaced = mf.mol.copy()
-        displaced.set_geom_(coords_bohr, unit='B')
-        displaced.build(False, False)
-        if pcm_obj is not None:
-            pcm_obj.reset(displaced)
-        energy, grad = grad_drv(displaced)
-        return grad.reshape(-1)
+    pmol = mol.copy()
+    pmol.build()
 
-    return grad_at
+    coords0     = pmol.atom_coords(unit='B')
+    natm        = pmol.natm
+    hessian     = numpy.zeros([natm, natm, 3, 3])
 
-def fd_hessian(grad_fn, coords_bohr, step):
-    coords      = numpy.array(coords_bohr, dtype=float)
-    flat_coords = coords.reshape(-1)
-    ndim        = flat_coords.size
-    hessian     = numpy.zeros((ndim, ndim))
+    for i in range(natm):
+        for j in range(3):
+            disp = numpy.zeros_like(coords0)
+            disp[i, j] = step
 
-    for i in range(ndim):
-        delta     = numpy.zeros(ndim)
-        delta[i]  = step
-        forward   = (flat_coords + delta).reshape(coords.shape)
-        backward  = (flat_coords - delta).reshape(coords.shape)
-        grad_for  = grad_fn(forward)
-        grad_back = grad_fn(backward)
-        hessian[:,i] = (grad_for - grad_back) / (2.0 * step)
+            pmol.set_geom_(coords0 + disp, unit='B')
+            pmol.build()
+            e0, g0 = g_scan(pmol)
+
+
+            pmol.set_geom_(coords0 - disp, unit='B')
+            pmol.build()
+            e1, g1 = g_scan(pmol)
+
+            g0 = numpy.asarray(g0)
+            g1 = numpy.asarray(g1)
+
+            hessian[i, :, j, :] = (g0 - g1)/(2.0 * step)
 
     return hessian
 
-# HF & DFT
-grad_fn = gradient_scanner(mf)
-# MP2
-#grad_fn = gradient_scanner(mymp)
-step    = 5e-3 #Bohr
-hessian = fd_hessian(grad_fn, cavity_coords, step)
+# Numerical hessian
+hessian = fd_hessian(mymp, step=5e-3)
 print(hessian)
 
 # thermodynamics
-mass   = mol.atom_mass_list(isotope_avg=True)
-coords = mol.atom_coords(unit='B')
-freq   = thermo_fd.harmonic_analysis(mol, hessian, imaginary_freq=True, exclude_trans=False, exclude_rot=False)
-freqs_tr = thermo_fd.compute_tr_frequencies(hessian, mass, coords)
-tr,vib,full,nTR = thermo_fd.collect_freq(mass, coords, freq, freqs_tr)
+results = thermo.harmonic_analysis(
+    mol, hessian,
+    exclude_trans=False,
+    exclude_rot=False,
+    imaginary_freq=False,
+)
 
-thermo_fd.show_frequencies(mass, coords, hessian, freq)
-result = thermo_fd.calc_hsm(tr, vib, T=298.15)
-thermo_fd.print_hsm_tables(result)
+freqs = results['freq_wavenumber'].real
+norm_mode = results['norm_mode']
+
+natm = mol.natm
+print("Frequencies [cm^-1]:")
+for i, w in enumerate(freqs):
+    print(f"{i}: {w:.4f}")
+
+thermo.dump_normal_mode(mol, results)
