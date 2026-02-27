@@ -1,0 +1,585 @@
+C*MODULE RSM_GMS_GETDAT  *DECK RSM_GETDAT0
+C>
+C>    @brief   get the information about IO
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_GETDAT0
+C
+      USE RISM_IO, ONLY : IR, IW, IP
+      USE RSMSED,  ONLY : IRISM
+
+      IMPLICIT NONE
+
+      INTEGER IR_GMS,IW_GMS,IP_GMS,IJK,IJKT,IDAF,NAV,IODA
+      COMMON /IOFILE/ IR_GMS,IW_GMS,IP_GMS,IJK,IJKT,IDAF,NAV,IODA(950)
+
+      INTEGER NEVALS,NGLEVL,NHLEVL
+      DOUBLE PRECISION RUNTYP,EXETYP,CHECK
+      COMMON /RUNOPT/ RUNTYP,EXETYP,NEVALS,NGLEVL,NHLEVL
+      DATA CHECK/8HCHECK   /
+C
+      IR = IR_GMS
+      IW = IW_GMS
+      IP = IP_GMS
+C
+      IRISM = 100
+      CALL SEQREW(IR)
+      CALL FNDGRP(IR,' $RISMUN',IRISM)
+      IF(IRISM /= 0) THEN
+        CALL SEQREW(IR)
+        CALL FNDGRP(IR,' $RISMLN',IRISM)
+      ENDIF
+C
+C     RISM DOES NOT SUPPORT "EXETYP=CHECK"
+C
+      IF(EXETYP .EQ. CHECK) IRISM = 100
+
+      END SUBROUTINE
+C*MODULE RSM_GMS_GETDAT  *DECK RSM_GETDAT1
+C>
+C>    @brief   get the scalar variables
+C>
+C>    @author  Daisuke Yokogawa
+C> 
+      SUBROUTINE RSM_GETDAT1
+C
+      USE RSMSED,   ONLY : IRISM, ICC, IDFT, ITDDFT, ICONCL, IMCSCF,
+     *                     NAT, ICH, MUL, NUM, NQMT, NA, NB,
+     *                     NE, RSM_SCF_PUTINF1, IDCORR, NROOT, ISPEC, 
+     *                     IZINC,
+     *                     ISKIP_RSM, IEQ
+      USE RSM_BSMOD,ONLY : MXANG, IPURED, IPUREF, NSHELL,
+     *                     NPRIM, RSM_SCF_PUTBS, NORM
+
+      use mx_limits, only: MXATM, MXSH, MXGTOT, MXAO, MXGRID
+
+      IMPLICIT NONE
+C
+C     GAMESS
+C
+      LOGICAL DFTBFL,SCC,SRSCC,DFTB3,DAMPXH,LRDFTB
+
+      INTEGER          :: N1, N2, N3, N4, N5, N6, N7, N8, I1
+      DOUBLE PRECISION :: V1, V2
+      COMMON /INFOA / N1,N2,N3,N4,N5,N6,N7,N8,
+     *                V1(MXATM),V2(3,MXATM),I1(MXATM)
+
+      INTEGER          :: NLP, KFIRST, KLAST, LMAX, LPSKIP, I2
+      DOUBLE PRECISION :: CLP, ZLP
+      COMMON /ECP2  / CLP(400),ZLP(400),NLP(400),KFIRST(MXATM,6),
+     *                KLAST(MXATM,6),LMAX(MXATM),LPSKIP(MXATM),
+     *                I2(MXATM)
+
+      INTEGER          :: NDFTFG, NRAD, NTHE, NPHI, NRAD0, NTHE0, NPHI0,
+     *                    NANGPT, NANGPT0, JANS
+      DOUBLE PRECISION :: DFTTHR, DFTGTHR, SWOFF, SW0, BSLRD
+      LOGICAL :: SG1
+      COMMON /DFGRID/ DFTTHR,DFTGTHR,SWOFF,SW0,BSLRD(137),NDFTFG,
+     *                NRAD,NTHE,NPHI,NRAD0,NTHE0,NPHI0,
+     *                NANGPT(MXGRID),NANGPT0(MXGRID),SG1,JANS
+
+      INTEGER          :: IDFT34, NAUXFUN, NAUXSHL
+      DOUBLE PRECISION :: DFTTYP, EXENA, EXENB, EXENC
+      COMMON /DFTPAR/ DFTTYP(20),EXENA,EXENB,EXENC,IDFT34,NAUXFUN,
+     *                                                    NAUXSHL
+
+      INTEGER :: NPRINT, ITOL, ICUT, NORMF, NORMP, NOPK
+      COMMON /OUTPUT/ NPRINT,ITOL,ICUT,NORMF,NORMP,NOPK
+
+      INTEGER          :: JANST,NRADT,NTHET,NPHIT,NLEBT,NSTAT,NTRIAL,
+     *                    MAXVEC,NTHST,IRECTD,ITDFG,ITDPRP,NONEQR,MODTD
+      DOUBLE PRECISION :: CNVTOL, PFREQ
+      LOGICAL :: TRIPLET, SG1T, TAMMD,TPA,ALPHKWD,BETAKWD
+      COMMON /INFOTD/ CNVTOL,PFREQ(2),MODTD,
+     *                JANST,NRADT,NTHET,NPHIT,NLEBT,
+     *                NSTAT,NTRIAL,MAXVEC,NTHST,IRECTD,ITDFG,ITDPRP,
+     *                TRIPLET,SG1T,NONEQR,TAMMD,TPA,ALPHKWD,BETAKWD
+
+      INTEGER :: IR, IW, IP, IJK, IJKT, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IJK,IJKT,IDAF,NAV,IODA(950)
+
+      INTEGER :: KSTART, KATOM, KTYPE, KNG, KLOC, KMIN, KMAX, NSHELL_GMS
+      DOUBLE PRECISION :: EX, CS, CP, CD, CF, CG, CH, CI
+      COMMON /NSHEL / EX(MXGTOT),CS(MXGTOT),CP(MXGTOT),CD(MXGTOT),
+     *                CF(MXGTOT),CG(MXGTOT),CH(MXGTOT),CI(MXGTOT),
+     *                KSTART(MXSH),KATOM(MXSH),KTYPE(MXSH),KNG(MXSH),
+     *                KLOC(MXSH),KMIN(MXSH),KMAX(MXSH),NSHELL_GMS
+
+      INTEGER          :: NEVALS, NGLEVL, NHLEVL
+      DOUBLE PRECISION :: RUNTYP, EXETYP
+      COMMON /RUNOPT/ RUNTYP,EXETYP,NEVALS,NGLEVL,NHLEVL
+
+      DOUBLE PRECISION :: TITLE, ANAM, BNAM, BFLAB
+      COMMON /RUNLAB/ TITLE(10),ANAM(MXATM),BNAM(MXATM),BFLAB(MXAO)
+
+      INTEGER          :: MPLEVL, MPCTYP
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+C
+      DOUBLE PRECISION :: CONICAL, SPNFLP, RNONE, RMC
+      DATA CONICAL/8HCONICAL /, SPNFLP/8HSPNFLP  /, RNONE/8HNONE    /,
+     *     RMC/8HMCSCF   /
+C
+      INTEGER :: I
+C
+C     RSINFA and ATMLAB
+C
+      NAT = N1
+      ICH = N2
+      MUL = N3
+      NUM = N4
+      NQMT= N5
+      NE  = N6
+      NA  = N7
+      NB  = N8
+C
+C     OUTPUT
+C
+      NORM  = NORMF .NE. 1 .OR. NORMP .NE. 1
+C
+C     RSQSHL
+C
+      CALL BASCHK(MXANG)
+      IPureD = .FALSE.
+      IPureF = .FALSE.
+
+      NPRIM = 0
+      DO I=1,NSHELL_GMS
+        NPRIM = NPRIM + KNG(I)
+      ENDDO
+
+      NSHELL = NSHELL_GMS
+C
+C     QM CALCULATION TYPE
+C
+C     ----- CC -----
+C
+      ISPEC = 0
+      IF(CCTYP == RNONE) THEN
+        ICC = 0
+      ELSE
+        ICC = 1
+      ENDIF
+C
+C     ----- DFT -----
+C
+      IF(NDFTFG.EQ.1  .OR.  DFTTYP(1).NE.0.0D+00) THEN
+        IDFT = 1
+      ELSE
+        IDFT = 0
+      ENDIF
+C
+C     ----- TD-DFT -----
+C
+      IF(TDDFTYP == RNONE) THEN
+        ITDDFT = 0
+      ELSEIF(TDDFTYP.EQ.SPNFLP) THEN
+        ITDDFT = 2
+        ITDPRP = 1
+        NROOT  = NTHST
+        ISPEC  = 1
+      ELSE
+        ITDDFT = 1
+        ITDPRP = 1
+        NROOT  = NTHST
+        ISPEC  = 1
+        IF(TRIPLET) THEN
+          MUL    = 3
+        ELSE
+          MUL    = 1
+        ENDIF
+      ENDIF
+C
+C     ----- MCSCF/MCQDPT2 -----
+C
+      IF (SCFTYP.EQ.RMC) THEN
+        IMCSCF = 1
+        IF(MPLEVL == 2) IMCSCF = 2
+      ELSE
+        IMCSCF = 0
+      ENDIF
+C
+C     ----- CONICAL INTERSECTION SERCH -----
+C
+      ICONCL = 0
+      IF(RUNTYP.EQ.CONICAL) ICONCL = 1
+C
+C     RISM CYCLE IN QM CALCULATION
+C
+C     ISKIP_RSM = 0 : PERFORME RISM CALCULATION EVERY ITERATION IN MO
+C                     OPTIMIZATION
+C               = 1 : PERFORME RISM CALCULATION ONLY IN THE BEGINNING OF 
+C                     MO OPTIMIZATION
+C
+      ISKIP_RSM = 0
+      IF(TDDFTYP /= RNONE .and. IEQ /= 0) ISKIP_RSM = 1
+C
+      IF(CITYP /= RNONE) CALL RSM_GETCIDAT(CITYP,NROOT)
+C
+C     D-correction
+C
+      IDCORR = 1
+!     IF(TDDFTYP /= RNONE) THEN
+!       IF(TRIPLET) IDCORR = 0
+!     ENDIF
+C
+      CALL RSM_SCF_PUTINF1(I1,I2,V1,ANAM)
+      CALL RSM_SCF_PUTBS(KSTART,KATOM,KTYPE,KNG,KLOC,KMIN,KMAX,EX,CS,CP,
+     *                   CD,CF,CG,CH,CI)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_GETDAT  *DECK RSM_GETDAT2
+C>
+C>    @brief   get the coordinate
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_GETDAT2
+C
+      USE RSMSED, ONLY : RSM_SCF_PUTINF2
+
+      use mx_limits, only: MXATM, MXSH, MXGTOT, MXAO
+C
+      IMPLICIT NONE
+C
+C     GAMESS
+C
+      INTEGER          :: NAT, ICH, MUL, NUM, NQMT, NE, NA, NB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+C
+C
+C
+      CALL RSM_SCF_PUTINF2(C)
+
+      RETURN
+      END
+C*MODULE RSM_GMS_GETDAT  *DECK RSM_GETDAT3
+C>
+C>    @brief   get the density
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_GETDAT3(L1,DA,DB)
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: L1
+      DOUBLE PRECISION, INTENT(  OUT) :: DA(*), DB(*)
+C
+C     GAMESS
+C
+      INTEGER          :: MPLEVL, MPCTYP
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      DOUBLE PRECISION :: SCF, UHF, ROHF
+      DATA SCF,UHF,ROHF/8HSCF     ,8HUHF     ,8HROHF    /
+C
+      INTEGER :: I, L2
+C
+
+      L2 = L1*(L1+1)/2
+
+      CALL DAREAD(IDAF,IODA,DA,L2,16,0)
+      IF(SCFTYP.EQ.UHF.or.SCFTYP.EQ.ROHF) THEN
+        CALL DAREAD(IDAF,IODA,DB,L2,20,0)
+        DO I=1,L2
+          DA(I)=DA(I)+DB(I)
+        ENDDO
+      ENDIF
+
+      RETURN
+      END 
+C*MODULE RSM_GMS_GETDAT  *DECK RSM_GETDAT4
+C>
+C>    @brief   switch the TD-DFT conditions
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NRUN: 0: calculation for state 1, 1: calculation for state 2
+C>
+      SUBROUTINE RSM_GETDAT4(NRUN)
+C
+      use mx_limits, only : MXATM
+
+      USE RISM_IO,   ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,    ONLY : IRISM, RSM_SCF_PUTPAR, ITDDFT, NROOT, ISPEC,
+     *                      ISKIP_RSM, RSM_SCF_SETPAR, NSERCH, EINT1, 
+     *                      EINT2, EINT3, IEQ, G1, G3
+      USE RISM_MOD,  ONLY : RSM_SETENE, EUU, EUV_E2, FRISM
+C
+      IMPLICIT NONE
+C
+      INTEGER, INTENT(IN   ) :: NRUN
+C
+C     GAMESS
+C
+      INTEGER :: JANST, NRADT, NTHET, NPHIT, NLEBT, NSTAT, NTRIAL,
+     *           MAXVEC, NTHST, IRECTD, ITDFG, ITDPRP, NONEQR, MODTD
+      DOUBLE PRECISION :: CNVTOL, PFREQ
+      LOGICAL :: TRIPLET, SG1T, TAMMD,TPA,ALPHKWD,BETAKWD
+      COMMON /INFOTD/ CNVTOL,PFREQ(2),MODTD,
+     *                JANST,NRADT,NTHET,NPHIT,NLEBT,
+     *                NSTAT,NTRIAL,MAXVEC,NTHST,IRECTD,ITDFG,ITDPRP,
+     *                TRIPLET,SG1T,NONEQR,TAMMD,TPA,ALPHKWD,BETAKWD
+
+      INTEGER          :: MPLEVL, MPCTYP
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      DOUBLE PRECISION :: ENERGY, EG
+      COMMON /FUNCT / ENERGY,EG(3*MXATM)
+C
+      DOUBLE PRECISION :: SPNFLP, RNONE
+      DATA SPNFLP/8HSPNFLP  /
+      DATA RNONE/8HNONE    /
+C 
+      INTEGER :: MUL  ! should be checked !!!
+C
+C     CHECK RISM CALCULATION
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+C
+      IF(NRUN /= 0) CALL RSM_SETENE
+
+      IF(TDDFTYP == RNONE) THEN
+        ITDDFT = 0
+      ELSEIF(TDDFTYP.EQ.SPNFLP) THEN
+        ITDDFT = 2
+        ITDPRP = 1
+        NROOT  = NTHST
+        ISPEC  = 1
+      ELSE
+        ITDDFT = 1
+        ITDPRP = 1
+        NROOT  = NTHST
+        ISPEC  = 1
+        IF(TRIPLET) THEN
+          MUL    = 3
+        ELSE
+          MUL    = 1
+        ENDIF
+      ENDIF
+C
+C     NRUN = 0 : CALCULATION FOR STATE 1
+C          = 1 : CALCULATION FOR STATE 2
+C
+      IF(NRUN == 0) THEN 
+        IEQ = 0
+      ELSEIF(NRUN == 1) THEN
+        IEQ = 2
+        NSERCH = NSERCH - 1
+
+        G1     = EUU + FRISM
+        EINT1  = EUU + EUV_E2 ! EINT[1]
+      ELSEIF(NRUN == 2) THEN
+        IEQ = 0
+        NSERCH = NSERCH - 1
+
+        EINT2  = EUU + EUV_E2 ! EINT[2]
+      ELSEIF(NRUN == 3) THEN
+        IEQ = 2
+        NSERCH = NSERCH - 1
+
+        G3     = EUU + FRISM
+        EINT3  = EUU + EUV_E2 ! EINT[2]
+      ENDIF
+C
+C     ISKIP_RSM = 0 : PERFORME RISM CALCULATION EVERY ITERATION IN MO
+C                     OPTIMIZATION
+C               = 1 : PERFORME RISM CALCULATION ONLY IN THE BEGINNING OF 
+C                     MO OPTIMIZATION
+C
+      ISKIP_RSM = 0
+      IF(TDDFTYP /= RNONE .and. IEQ /= 0) ISKIP_RSM = 1
+C
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_GETDAT  *DECK RSM_OLDRSM_TD
+C>
+C>    @brief   modify ITDPRP along with IZINC value
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_OLDRSM_TD
+C
+      USE RSMSED,   ONLY : IZINC
+
+      IMPLICIT NONE
+C
+C     GAMESS
+C
+      INTEGER :: JANST, NRADT, NTHET, NPHIT, NLEBT, NSTAT, NTRIAL,
+     *           MAXVEC, NTHST, IRECTD, ITDFG, ITDPRP, NONEQR, MODTD
+      DOUBLE PRECISION :: CNVTOL, PFREQ
+      LOGICAL :: TRIPLET, SG1T, TAMMD,TPA,ALPHKWD,BETAKWD
+      COMMON /INFOTD/ CNVTOL,PFREQ(2),MODTD,
+     *                JANST,NRADT,NTHET,NPHIT,NLEBT,
+     *                NSTAT,NTRIAL,MAXVEC,NTHST,IRECTD,ITDFG,ITDPRP,
+     *                TRIPLET,SG1T,NONEQR,TAMMD,TPA,ALPHKWD,BETAKWD
+
+      INTEGER          :: MPLEVL, MPCTYP
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      DOUBLE PRECISION :: RNONE
+      DATA RNONE/8HNONE    /
+C
+C     MODIFY ITDPRP in GAMESS
+C
+      IF(TDDFTYP /= RNONE) THEN
+        IF(IZINC == 1) THEN
+          ITDPRP = 1
+        ELSE
+          ITDPRP= 0
+        ENDIF 
+      ENDIF
+
+      RETURN
+      END
+C*MODULE RSM_GMS_GETDAT  *DECK RSM_GETDEN
+C>
+C>    @brief   get density 
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITYPE: 0: HF DENSITY, 1: TDDFT DENSITY
+C>             L1: the number of atomic orbitals
+C>             PA: density matrix
+C>             WRK1: working array
+C>
+      SUBROUTINE RSM_GETDEN(ITYPE,L1,PA,WRK1)
+C
+      USE RSMSED,   ONLY : IZINC, ITER_RSMTD, IEQ
+      USE RISM_MOD, ONLY : IREST
+C
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: ITYPE, L1
+      DOUBLE PRECISION, INTENT(  OUT) :: WRK1(*),PA(*)
+C
+      INTEGER          :: MPLEVL, MPCTYP
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      DOUBLE PRECISION :: EXCITE, SPNFLP
+      DATA EXCITE,SPNFLP/8HEXCITE  ,8HSPNFLP  /
+C
+C     ITYPE = 0 : HF DENSITY
+C           = 1 : TDDFT DENSITY (C+T+Z) (IZINC = 1)
+C                 TDDFT DENSITY (C+T  ) (IZINC = 0)
+C
+      IF(ITYPE == 0) THEN
+      ELSEIF(ITYPE == 1) THEN
+        IF(IZINC == 1) THEN
+          IF(TDDFTYP.EQ.SPNFLP) THEN
+            CALL RSM_DENTD_SPNFLP(PA,WRK1,L1)
+          ELSE
+            CALL DENTD(PA,WRK1,L1)
+          ENDIF
+        ELSE
+          IF((IREST == 1.and.ITER_RSMTD == 1) .or. IEQ == 2) THEN
+            CALL DENTD(PA,WRK1,L1)
+          ELSE
+            CALL RSM_DENTD_CT(PA,WRK1)
+          endif
+        ENDIF
+      ENDIF
+
+      RETURN
+      END
+C*MODULE RSM_GMS_GETDAT  *DECK RSM_DENTD_SPNFLP
+C>
+C>    @brief   get density for spin-flip TD calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   PA: density matrix
+C>             WRK1: working array
+C>             L1: the number of atomic orbitals
+C>
+      SUBROUTINE RSM_DENTD_SPNFLP(PA,WRK1,L1)
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: L1
+      DOUBLE PRECISION, INTENT(  OUT) :: WRK1(*), PA(*)
+C
+      INTEGER :: IR, IW, IP, IJK, IJKT, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IJK,IJKT,IDAF,NAV,IODA(950)
+C
+      INTEGER :: L2
+C
+      L2 = L1*(L1+1)/2
+C
+C     ALPHA DENSITY
+C
+      CALL DAREAD(IDAF,IODA,WRK1,L2,417,0)
+      CALL VADD(PA,1,WRK1,1,PA,1,L2)
+C
+C     BETA DENSITY
+C
+      CALL DAREAD(IDAF,IODA,WRK1,L2,427,0)
+      CALL VADD(PA,1,WRK1,1,PA,1,L2)
+
+      RETURN
+      END
+C*MODULE RSM_GMS_GETDAT  *DECK RSM_GETCIDAT
+C>
+C>    @brief   get density for spin-flip TD calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   CITYP: CI computation
+C>             NROOT: the CI state whose energy will be used
+C>
+
+      SUBROUTINE RSM_GETCIDAT(CITYP,NROOT)
+
+      use mx_limits, only: mxrt
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(  OUT) :: NROOT
+      DOUBLE PRECISION, INTENT(IN   ) :: CITYP
+C
+      INTEGER :: N1, N2, N3, N4, N5, N6, N7, N8, N9, N10, N11, N12, N13,
+     *           N14, N15, N16, N17, N18, N19, N20, IROOT_ALDET
+      DOUBLE PRECISION :: V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11
+      COMMON /DETWFN/ V1(MXRT),V2(MXRT),V3,V4,V5,V6,V7,V8,V9,V10,
+     *                N1(MXRT),N2(MXRT),N3,N4,N5,N6,N7,N8,N9,N10,
+     *                IROOT_ALDET,N11,N12,N13,N14,N15,N16,N17,N18,N19,
+     *                V11(mxrt),N20(mxrt)
+C
+      DOUBLE PRECISION :: ALDET, GENCI, FSOCI, ORMAS, CIS, GUGA
+      DATA ALDET,GENCI,FSOCI/8HALDET   ,8HGENCI   ,8HFSOCI   /
+      DATA    ORMAS,CIS,GUGA/8HORMAS   ,8HCIS     ,8HGUGA    /
+C
+      IF(CITYP.EQ.ALDET) NROOT = IROOT_ALDET
+C
+      RETURN
+      END

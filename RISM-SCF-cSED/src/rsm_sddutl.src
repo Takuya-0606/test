@@ -1,0 +1,2387 @@
+C*MODULE RSM_SDDUTL  *DECK RSM_ABSIN
+C>
+C>    @brief   read parameters for ABS
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MASWRK: master node or not
+C>             IR: file number of the input file
+C>             IW: file number of the output file
+C>             NSHEL: the number of ABSs
+C>
+      SUBROUTINE RSM_ABSIN(MASWRK,IR,IW,NSHEL)
+C
+      USE RSMSED, ONLY : NAT, ZAN, IZCORE
+      USE ABSMOD, ONLY : NSHEL0A, NQMT0A, QMTTOL
+C
+      IMPLICIT NONE
+
+      LOGICAL, INTENT(IN   ) :: MASWRK
+      INTEGER, INTENT(IN   ) :: IR, IW
+      INTEGER, INTENT(  OUT) :: NSHEL 
+C-----GAMESS
+      INTEGER, PARAMETER :: NNAM=3
+      DOUBLE PRECISION   :: QNAM(NNAM), ABSINP
+      INTEGER            :: KQNAM(NNAM)
+C
+      DATA ABSINP/8HABSINP  /
+      DATA QNAM /8HJABS    ,8HLANGMX   ,8HQMTTOL  /
+      DATA KQNAM/         1,      20001,         3/
+C
+      INTEGER              :: JRET, I, JABS, IZAN
+      INTEGER, ALLOCATABLE :: LANGMX(:)
+C
+C     Read ABS options
+C
+C     QMTTOL = linear dependence threshhold
+C              (default: 1.0D-5)
+C     JABS   = 3 Type II
+C            = 4 Type III
+C
+C
+      ALLOCATE(LANGMX(NAT))
+C
+      JABS   = 3
+      LANGMX = 1
+      QMTTOL = 1.0D-05
+
+      JRET=0
+      CALL NAMEIO(IR,JRET,ABSINP,NNAM,QNAM,KQNAM,
+     *                JABS,LANGMX,QMTTOL,
+     *                                                 0,
+     *     0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,
+     *     0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,
+     *     0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0)
+C
+C     DETERMINE LANG
+C
+      DO I=1,NAT
+        IF(LANGMX(I) == 0) THEN
+          IZAN= INT(ZAN(I)+IZCORE(I))
+
+          CALL RSM_LANGMX(IZAN,LANGMX(I))
+        ENDIF
+      ENDDO
+C
+      IF(JABS == 0) THEN
+        CALL ABRT
+      ELSEIF(JABS == 1) THEN
+        CALL ABRT
+      ELSEIF(JABS == 2) THEN
+        CALL ABRT
+      ELSEIF(JABS == 3 .or. JABS == 4) THEN
+        CALL RSM_ABS34INI(IR,LANGMX)
+      ELSEIF(JABS == 5) THEN
+        CALL ABRT
+      ENDIF
+C
+      IF(JABS == 3) THEN
+        CALL RSM_ABS3(IR,NSHEL,LANGMX)
+      ELSEIF(JABS == 4) THEN
+        CALL RSM_ABS4(IR,NSHEL,LANGMX)
+      ENDIF
+
+      IF(MASWRK) THEN
+        WRITE(IW,*) ''
+        WRITE(IW,'(5X,A15)') '---------------'
+        WRITE(IW,'(5X,A15)') '$ABSINP OPTIONS'
+        WRITE(IW,'(5X,A15)') '---------------'
+        WRITE(IW,'(5X,A5,I8)') 'JABS=',JABS
+        WRITE(IW,'(5X,2(A8,I8))') 'NSHEL0A=',NSHEL0A,' NQMT0A=',NQMT0A
+        WRITE(IW,*) ''
+      ENDIF
+C
+      DEALLOCATE(LANGMX)
+C
+      RETURN
+      END
+
+C*MODULE RSM_SDDUTL  *DECK RSM_LANGMX
+C>
+C>    @brief   get the maximum angular momentum of ABS
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IATM: atom number
+C>             LANGMX: the maximum angular momentum
+C>
+      SUBROUTINE RSM_LANGMX(IATM,LANGMX)
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN   ) :: IATM
+      INTEGER, INTENT(  OUT) :: LANGMX
+C
+      INTEGER                :: IANGMX(103)
+      DATA IANGMX/1,                                1,
+     *            1,1,                    2,2,2,2,2,2,
+     *            2,2,                    2,2,2,2,2,2,
+     *            2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+     *            3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+     *            3,3,
+     *                4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+     *                  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+     *            4,4,
+     *                4,4,4,4,4,4,4,4,4,4,4,4,4,4,4/
+C
+      LANGMX = IANGMX(IATM)
+C
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_ABS34INI
+C>
+C>    @brief   determine the number of ABSs
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IR: the file number of input file
+C>             LANGMX: the maximum angular momentum
+C>
+      SUBROUTINE RSM_ABS34INI(IR,LANGMX)
+
+      USE RSMSED,    ONLY : NAT, ZAN, IZCORE
+      USE RSM_BSMOD, ONLY : NSHELL, KATOM, KSTART, KNG, KTYPE, KMIN, EX
+      USE ABSMOD,    ONLY : NSHEL0A, MXG, MXS
+
+      IMPLICIT NONE
+C
+      INTEGER, INTENT(IN   ) :: IR, LANGMX(*)
+C
+      INTEGER, PARAMETER              :: MXGTOT=20000
+      DOUBLE PRECISION, PARAMETER     :: EF = 2.0D+00, SF = 1.5D+00
+C
+      INTEGER                :: NSI(3), NBFS(4)
+      DATA NBFS/1, 3, 6,10/
+C
+      INTEGER                         :: I, IZAN, I1, I2, II, LOC, IC,
+     *                                   IL, ISL, LVAL, NN
+      DOUBLE PRECISION                :: PI, PI32, EXMAX, EXA, EXB, EXP
+      DOUBLE PRECISION, ALLOCATABLE   :: EXX(:,:)
+C
+      PI=ACOS(-1.0D+00)
+      PI32 = PI * SQRT(PI)
+
+      ALLOCATE(EXX(MXGTOT,3))
+C
+      NSHEL0A = 0
+      LOC     = 0
+      EXMAX   = 5.0D+05
+      DO IC=1,NAT
+        NSI =0
+        LVAL=0
+        DO ISL=1,NSHELL
+          I   = KATOM(ISL)
+          IZAN= INT(ZAN(I)+IZCORE(I))
+          I1  = KSTART(ISL)
+          I2  = I1+KNG(ISL)-1
+
+          IF(KATOM(ISL).EQ.IC) THEN
+            IF(KTYPE(ISL) <= LANGMX(I)) THEN
+              IF(KTYPE(ISL) == 1) THEN
+                DO II=I1,I2
+                  IF(EX(II) <= EXMAX) THEN
+                    NSI(1)       = NSI(1)  +1
+                    EXX(NSI(1),1)=-EX(II)
+                  ENDIF
+                ENDDO
+                LVAL = 1
+              ELSEIF(KTYPE(ISL) == 2) THEN
+                DO II=I1,I2
+                  NSI(2)       = NSI(2)  +1
+                  EXX(NSI(2),2)=-EX(II)
+                ENDDO
+
+                IF(KMIN(ISL) == 1) THEN
+                  DO II=I1,I2
+                    IF(EX(II) <= EXMAX) THEN
+                      NSI(1)       = NSI(1)  +1
+                      EXX(NSI(1),1)=-EX(II)
+                    ENDIF
+                  ENDDO
+                ENDIF
+                LVAL = 2
+              ELSEIF(KTYPE(ISL) == 3) THEN
+                DO II=I1,I2
+                  NSI(3)       = NSI(3)  +1
+                  EXX(NSI(3),3)=-EX(II)
+                ENDDO
+                LVAL = 3
+              ENDIF
+            ELSEIF(KMIN(ISL) <= LANGMX(I)) THEN
+              IF(KMIN(ISL) == 1) THEN
+                DO II=I1,I2
+                  NSI(1)       = NSI(1)  +1
+                  EXX(NSI(1),1)=-EX(II)
+                ENDDO
+                LVAL = 1
+              ENDIF
+            ENDIF
+          ENDIF
+        ENDDO
+
+        DO IL=1,LVAL
+          CALL RSM_SRTABS(NSI(IL),EXX(1,IL))
+
+          DO I=1,NSI(IL)
+            EXX(I,IL) = - EXX(I,IL)
+          ENDDO
+
+          EXA = EF*EXX(1,IL)
+          EXB = EXA
+          NN  = 1
+          DO II =2,NSI(IL)
+            EXP = EF*EXX(II,IL)
+            IF(SF*EXP.GT.EXA) THEN
+              EXB = (EXP*(EXB**NN))**(1.0D+00/DFLOAT(NN+1))
+              NN  = NN + 1
+            ELSE
+              NSHEL0A = NSHEL0A + 1
+
+              LOC     = LOC + NBFS(IL)
+C
+C             RESET
+C
+              EXA   = EXP
+              EXB   = EXA
+              NN    = 1
+            ENDIF
+          ENDDO
+C
+          EXP = EXA*0.5D+00
+          IF(SF*EXP.LE.EXA) THEN
+            NSHEL0A        = NSHEL0A + 1
+
+            LOC   = LOC + NBFS(IL)
+          ENDIF
+        ENDDO
+      ENDDO
+
+      MXG =NSHEL0A
+      MXS =NSHEL0A
+
+!     print *,MXG,MXS,NSHEL0A
+C
+      DEALLOCATE(EXX)
+C
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_ABS3
+C>
+C>    @brief   set ABS
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IR: the file number of input file
+C>             NSHEL: the number of ABSs
+C>             LANGMX: the maximum angular momentum
+C>
+      SUBROUTINE RSM_ABS3(IR,NSHEL,LANGMX)
+
+      USE ABSMOD,    ONLY : EX0A,COF0A,KSTRT0A,KATM0A,KTYP0A,KNG0A,
+     *                      KLOC0A,KMIN0A,KMAX0A,NSHEL0A,TQ,NQMT0A,
+     *                      KATM_QMT0A,QMTTOL, RSM_PUTABS, MXS, MXG,
+     *                      NRAD, FMAT, MXANG_ABS
+      USE RSMSED,    ONLY : NAT, IAN, IZCORE, ZAN
+      USE RSM_BSMOD, ONLY : KSTART, KATOM, KNG, KTYPE, KMIN, EX, NSHELL
+
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN   ) :: IR, LANGMX(*)
+      INTEGER, INTENT(  OUT) :: NSHEL
+
+      INTEGER, PARAMETER              :: MXGTOT=20000
+      DOUBLE PRECISION,  PARAMETER    :: EF = 2.0D+00, SF = 1.5D+00
+C
+      DOUBLE PRECISION,  ALLOCATABLE  :: XMAT(:),EIG(:),WRK(:),WRK2(:,:)
+      DOUBLE PRECISION,  ALLOCATABLE  :: RLN(:),WGHT(:),WK(:),EXX(:,:)
+C
+      INTEGER                :: NSI(3), NBFS(4)
+      DATA NBFS/1, 3, 6,10/
+C
+      INTEGER                :: LOC, IC, IST, LVAL, ISL, I, J, IZAN, I1,
+     *                          I2, IL, II, NN, N3, IEN, IJ, INFO, IRAD,
+     *                          IG, JG, JJ, LIT
+      DOUBLE PRECISION       :: PI, PI32, FCT, EXMAX, EXA, EXB, EXC,
+     *                          FACS, FACP, FACD, FACF, AI, AJ,
+     *                          R1, R2, R4, R6, ZETA, CSI, VAL
+      DOUBLE PRECISION       :: TRN1(9,10),TRN2(10,9),TRN3(10,10)
+C
+      ALLOCATE(KSTRT0A(MXS),KATM0A(MXS),KTYP0A(MXS),KNG0A(MXS),
+     *         KLOC0A(MXS),KMIN0A(MXS),KMAX0A(MXS))
+      ALLOCATE(EX0A(MXG),COF0A(MXG),EXX(MXGTOT,3))
+      ALLOCATE(KATM_QMT0A(MXS))
+      ALLOCATE(TQ(NSHEL0A,NSHEL0A))
+C
+      ALLOCATE(XMAT(NSHEL0A*NSHEL0A),EIG(NSHEL0A),WRK(3*NSHEL0A))
+C
+      PI=ACOS(-1.0D+00)
+      PI32 = PI * SQRT(PI)
+C
+      NSHEL0A   = 0
+      NQMT0A    = 0
+      LOC       = 0
+      TQ        = 0.0D+00
+      FCT       = 2.0D+00/SQRT(PI)
+      EXMAX     = 5.0D+05
+      MXANG_ABS = -1
+      DO IC=1,NAT
+        IST = NSHEL0A + 1
+        NSI = 0
+        LVAL= 0
+        DO ISL=1,NSHELL
+          I   = KATOM(ISL)
+          IZAN= INT(ZAN(I)+IZCORE(I))
+          I1  = KSTART(ISL)
+          I2  = I1+KNG(ISL)-1
+
+          IF(KATOM(ISL).EQ.IC) THEN
+            IF(KTYPE(ISL) <= LANGMX(I)) THEN
+              IF(KTYPE(ISL) == 1) THEN
+                DO II=I1,I2
+                  IF(EX(II) <= EXMAX) THEN
+                    NSI(1)       = NSI(1)  +1
+                    EXX(NSI(1),1)=-EX(II)
+                  ENDIF
+                ENDDO
+                LVAL = 1
+              ELSEIF(KTYPE(ISL) == 2) THEN
+                DO II=I1,I2
+                  NSI(2)       = NSI(2)  +1
+                  EXX(NSI(2),2)=-EX(II)
+                ENDDO
+
+                IF(KMIN(ISL) == 1) THEN
+                  DO II=I1,I2
+                    IF(EX(II) <= EXMAX) THEN
+                      NSI(1)       = NSI(1)  +1
+                      EXX(NSI(1),1)=-EX(II)
+                    ENDIF
+                  ENDDO
+                ENDIF
+                LVAL = 2
+              ELSEIF(KTYPE(ISL) == 3) THEN
+                DO II=I1,I2
+                  NSI(3)       = NSI(3)  +1
+                  EXX(NSI(3),3)=-EX(II)
+                ENDDO
+                LVAL = 3
+              ENDIF
+            ELSEIF(KMIN(ISL) <= LANGMX(I)) THEN
+              IF(KMIN(ISL) == 1) THEN
+                DO II=I1,I2
+                  NSI(1)       = NSI(1)  +1
+                  EXX(NSI(1),1)=-EX(II)
+                ENDDO
+                LVAL = 1
+              ENDIF
+            ENDIF
+          ENDIF
+        ENDDO
+
+        MXANG_ABS = MAX(LVAL-1,MXANG_ABS)
+
+        DO IL=1,LVAL
+          CALL RSM_SRTABS(NSI(IL),EXX(1,IL))
+
+          DO I=1,NSI(IL)
+            EXX(I,IL) = - EXX(I,IL)
+          ENDDO
+
+          EXA = EF*EXX(1,IL)
+          EXB = EXA
+          NN  = 1
+          DO II =2,NSI(IL)
+            EXC = EF*EXX(II,IL)
+            IF(SF*EXC.GT.EXA) THEN
+              EXB = (EXC*(EXB**NN))**(1.0D+00/DFLOAT(NN+1))
+              NN  = NN + 1
+            ELSE
+              NSHEL0A          = NSHEL0A + 1
+
+              KSTRT0A(NSHEL0A) = NSHEL0A
+              KATM0A (NSHEL0A) = IC
+              EX0A   (NSHEL0A) = EXB*0.5D+00
+              KNG0A  (NSHEL0A) = 1
+              KTYP0A (NSHEL0A) = IL
+!             KLOC0A (NSHEL0A) = LOC + 1
+              KLOC0A (NSHEL0A) = NSHEL0A
+
+              FACS = PI32/(EXB*SQRT(EXB))
+              FACP = 0.5000d0*FACS/EXB
+              FACD = 0.7500d0*FACS/(EXB*EXB)
+              FACF = 1.8750d0*FACS/(EXB*EXB*EXB)
+
+              IF(IL == 1) THEN
+                COF0A (NSHEL0A) = 1.0D+00/SQRT(FACS)
+                KMIN0A(NSHEL0A) = 1
+                KMAX0A(NSHEL0A) = 1
+              ELSEIF(IL == 2) THEN
+                COF0A (NSHEL0A) = 1.0D+00/SQRT(FACP)
+                KMIN0A(NSHEL0A) = 2
+                KMAX0A(NSHEL0A) = 4
+              ELSEIF(IL == 3) THEN
+                COF0A (NSHEL0A) = 1.0D+00/SQRT(FACD)
+                KMIN0A(NSHEL0A) = 5
+                KMAX0A(NSHEL0A) = 10
+              ELSEIF(IL == 4) THEN
+                CALl ABRT
+              ENDIF
+ 
+              LOC   = LOC + NBFS(IL)
+C
+C             RESET
+C
+              EXA   = EXC
+              EXB   = EXA
+              NN    = 1
+            ENDIF
+          ENDDO
+C
+          EXC = EXA*0.5D+00
+          IF(SF*EXC.LE.EXA) THEN
+            NSHEL0A        = NSHEL0A + 1
+
+            KSTRT0A(NSHEL0A) = NSHEL0A
+            KATM0A (NSHEL0A) = IC
+            EX0A   (NSHEL0A) = EXB*0.5D+00
+            KNG0A  (NSHEL0A) = 1
+            KTYP0A (NSHEL0A) = IL
+!           KLOC0A (NSHEL0A) = LOC + 1
+            KLOC0A (NSHEL0A) = NSHEL0A
+
+            FACS = PI32/(EXB*SQRT(EXB))
+            FACP = 0.5000d0*FACS/EXB
+            FACD = 0.7500d0*FACS/(EXB*EXB)
+
+            IF(IL == 1) THEN
+              COF0A (NSHEL0A) = 1.0D+00/SQRT(FACS)
+              KMIN0A(NSHEL0A) = 1
+              KMAX0A(NSHEL0A) = 1
+            ELSEIF(IL == 2) THEN
+              COF0A (NSHEL0A) = 1.0D+00/SQRT(FACP)
+              KMIN0A(NSHEL0A) = 2
+              KMAX0A(NSHEL0A) = 4
+            ELSEIF(IL == 3) THEN
+              COF0A (NSHEL0A) = 1.0D+00/SQRT(FACD)
+              KMIN0A(NSHEL0A) = 5
+              KMAX0A(NSHEL0A) = 10
+            ENDIF
+
+            LOC   = LOC + NBFS(IL)
+          ENDIF
+
+        ENDDO
+
+        IEN = NSHEL0A
+        NN  = IEN - IST + 1
+        N3  = 3*NN
+
+        IJ = 0
+        DO I=IST,IEN
+          AI = EX0A(I)+EX0A(I)
+          DO J=IST,IEN
+            IJ = IJ + 1
+            AJ = EX0A(J)+EX0A(J)
+
+            XMAT(IJ) = FCT*SQRT((AI+AJ)/(AI*AJ))
+!           print *,xmat(ij)
+          ENDDO
+        ENDDO
+
+        CALL DSYEV('V','U',NN,XMAT,NN,EIG,WRK,N3,INFO)
+
+        DO I=1,NN
+!               print *,i,eig(i)
+          IF(ABS(EIG(I)) > QMTTOL) THEN
+            NQMT0A = NQMT0A + 1
+
+            KATM_QMT0A(NQMT0A) = IC
+            DO J=1,NN
+              TQ(J+IST-1,NQMT0A) = XMAT((I-1)*NN+J)
+            ENDDO
+          ENDIF
+        ENDDO
+      ENDDO
+!                            tq = 0.0d0
+!                            do i=1,nshel0a
+!                              tq(i,i) = 1.0d0
+!                            enddo
+
+      NSHEL = NSHEL0A
+C
+C     CONSTRUCT FMAT
+C
+      ALLOCATE(RLN(NRAD),WGHT(NRAD),WK(NSHEL0A),FMAT(NQMT0A,NRAD))
+
+      CALL RSM_FITGRID(NRAD,RLN,WGHT)
+
+      DO IRAD=1,NRAD
+        R1 = RLN(IRAD)
+        R2 = R1*R1
+        R4 = R2*R2
+        R6 = R2*R4
+
+        DO II = 1,NSHEL0A
+          LIT  = KTYP0A(II)
+          I1   = KSTRT0A(II)
+          I2   = I1 + KNG0A(II) - 1
+
+          IF(LIT == 1) THEN
+            VAL = 0.0D+00
+            DO IG=I1,I2
+              DO JG=I1,I2
+                ZETA = EX0A(IG)   + EX0A(JG)
+                CSI  = COF0A(IG) * COF0A(JG)
+
+                VAL = VAL + CSI*EXP(-ZETA*R2)
+              ENDDO
+            ENDDO
+            VAL = VAL*R2
+          ELSEIF(LIT == 2) THEN
+            VAL = 0.0D+00
+            DO IG=I1,I2
+              DO JG=I1,I2
+                ZETA = EX0A(IG)   + EX0A(JG)
+                CSI  = COF0A(IG) * COF0A(JG)
+
+                VAL = VAL + CSI*EXP(-ZETA*R2)
+              ENDDO
+            ENDDO
+            VAL = VAL*R4
+          ELSEIF(LIT == 3) THEN
+            VAL = 0.0D+00
+            DO IG=I1,I2
+              DO JG=I1,I2
+                ZETA = EX0A(IG)   + EX0A(JG)
+                CSI  = COF0A(IG) * COF0A(JG)
+
+                VAL = VAL + CSI*EXP(-ZETA*R2)
+              ENDDO
+            ENDDO
+            VAL = VAL*R6
+          ENDIF
+
+          WK(II) = VAL
+        ENDDO
+
+        DO II=1,NQMT0A
+          VAL = 0.0D+00
+          DO JJ=1,NSHEL0A
+            VAL = VAL + TQ(JJ,II)*WK(JJ)
+          ENDDO
+
+          FMAT(II,IRAD) = VAL
+        ENDDO
+      ENDDO
+C
+C
+C
+      CALL RSM_SETTRN(TRN1,TRN2,TRN3)
+
+      CALL RSM_PUTABS(KSTRT0A,KATM0A,KTYP0A,KNG0A,KLOC0A,KMIN0A,KMAX0A,
+     *                KATM_QMT0A,EX0A,COF0A,TQ,TRN1,TRN2,TRN3,FMAT)
+C
+      DEALLOCATE(KSTRT0A,KATM0A,KTYP0A,KNG0A,KLOC0A,KMIN0A,KMAX0A,EX0A,
+     *           COF0A,KATM_QMT0A,TQ,EXX)
+      DEALLOCATE(RLN,WGHT,WK,FMAT)
+      DEALLOCATE(XMAT,EIG,WRK)
+C
+      RETURN
+      END
+
+C*MODULE RSM_SDDUTL  *DECK RSM_ABS4
+C>
+C>    @brief   set ABS
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IR: the file number of input file
+C>             NSHEL: the number of ABSs
+C>             LANGMX: the maximum angular momentum
+C>
+      SUBROUTINE RSM_ABS4(IR,NSHEL,LANGMX)
+
+      USE ABSMOD,    ONLY : EX0A,COF0A,KSTRT0A,KATM0A,KTYP0A,KNG0A,
+     *                      KLOC0A,KMIN0A,KMAX0A,NSHEL0A,TQ,NQMT0A,
+     *                      KATM_QMT0A,QMTTOL, RSM_PUTABS, MXS, MXG,
+     *                      NRAD, FMAT, MXANG_ABS
+      USE RSMSED,    ONLY : NAT, IAN, IZCORE, ZAN
+      USE RSM_BSMOD, ONLY : KSTART, KATOM, KNG, KTYPE, KMIN, EX, NSHELL
+
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN   ) :: IR, LANGMX(*)
+      INTEGER, INTENT(  OUT) :: NSHEL
+
+      INTEGER, PARAMETER     :: MXGTOT=20000
+      DOUBLE PRECISION, PARAMETER     :: EF = 2.0D+00, SF = 1.5D+00      
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: XMAT(:),EIG(:),WRK(:),
+     *                                   WRK2(:,:),EXX(:,:)
+      DOUBLE PRECISION, ALLOCATABLE   :: RLN(:),WGHT(:),WK(:),GMSRAD(:)
+C
+      INTEGER                :: NSI(3), NBFS(4)
+      DATA NBFS/1, 3, 6,10/
+C
+      INTEGER                :: IC, LOC, IST, LVAL, ISL, I, J, IZAN, I1,
+     *                          I2, II, NN, IEN, IJ, IRAD, IG, JG, INFO,
+     *                          IL, JJ, N3, LIT, IATM
+      DOUBLE PRECISION       :: TRN1(9,10),TRN2(10,9),TRN3(10,10),
+     *                          PI, PI32, FCT, AI, AJ, AFACT, EXMAX,
+     *                          FACS, FACP, FACD, FACF, EXA, EXB, EXC,
+     *                          R1, R2, R4, R6, RVDW0, RVDW1, VAL, CSI,
+     *                          ZETA
+C
+      ALLOCATE(KSTRT0A(MXS),KATM0A(MXS),KTYP0A(MXS),KNG0A(MXS),
+     *         KLOC0A(MXS),KMIN0A(MXS),KMAX0A(MXS))
+      ALLOCATE(EX0A(MXG),COF0A(MXG),EXX(MXGTOT,3))
+      ALLOCATE(KATM_QMT0A(MXS))
+      ALLOCATE(TQ(NSHEL0A,NSHEL0A))
+C
+      ALLOCATE(XMAT(NSHEL0A*NSHEL0A),EIG(NSHEL0A),WRK(3*NSHEL0A),
+     *         GMSRAD(NAT))
+C
+      PI=ACOS(-1.0D+00)
+      PI32 = PI * SQRT(PI)
+C
+      NSHEL0A   = 0
+      NQMT0A    = 0
+      LOC       = 0
+      TQ        = 0.0D+00
+      FCT       = 2.0D+00/SQRT(PI)
+      EXMAX     = 5.0D+05
+      MXANG_ABS = -1
+      DO IC=1,NAT
+        IST = NSHEL0A + 1
+        NSI = 0
+        LVAL= 0
+        DO ISL=1,NSHELL
+          I   = KATOM(ISL)
+          IZAN= INT(ZAN(I)+IZCORE(I))
+          I1  = KSTART(ISL)
+          I2  = I1+KNG(ISL)-1
+
+          IF(KATOM(ISL).EQ.IC) THEN
+            IF(KTYPE(ISL) <= LANGMX(I)) THEN
+              IF(KTYPE(ISL) == 1) THEN
+                DO II=I1,I2
+                  IF(EX(II) <= EXMAX) THEN
+                    NSI(1)       = NSI(1)  +1
+                    EXX(NSI(1),1)=-EX(II)
+                  ENDIF
+                ENDDO
+                LVAL = 1
+              ELSEIF(KTYPE(ISL) == 2) THEN
+                DO II=I1,I2
+                  NSI(2)       = NSI(2)  +1
+                  EXX(NSI(2),2)=-EX(II)
+                ENDDO
+
+                IF(KMIN(ISL) == 1) THEN
+                  DO II=I1,I2
+                    IF(EX(II) <= EXMAX) THEN
+                      NSI(1)       = NSI(1)  +1
+                      EXX(NSI(1),1)=-EX(II)
+                    ENDIF
+                  ENDDO
+                ENDIF
+                LVAL = 2
+              ELSEIF(KTYPE(ISL) == 3) THEN
+                DO II=I1,I2
+                  NSI(3)       = NSI(3)  +1
+                  EXX(NSI(3),3)=-EX(II)
+                ENDDO
+                LVAL = 3
+              ENDIF
+            ELSEIF(KMIN(ISL) <= LANGMX(I)) THEN
+              IF(KMIN(ISL) == 1) THEN
+                DO II=I1,I2
+                  NSI(1)       = NSI(1)  +1
+                  EXX(NSI(1),1)=-EX(II)
+                ENDDO
+                LVAL = 1
+              ENDIF
+            ENDIF
+          ENDIF
+        ENDDO
+
+        MXANG_ABS = MAX(LVAL-1,MXANG_ABS)
+
+        DO IL=1,LVAL
+          CALL RSM_SRTABS(NSI(IL),EXX(1,IL))
+
+          DO I=1,NSI(IL)
+            EXX(I,IL) = - EXX(I,IL)
+          ENDDO
+
+          EXA = EF*EXX(1,IL)
+          EXB = EXA
+          NN  = 1
+          DO II =2,NSI(IL)
+            EXC = EF*EXX(II,IL)
+            IF(SF*EXC.GT.EXA) THEN
+              EXB = (EXC*(EXB**NN))**(1.0D+00/DFLOAT(NN+1))
+              NN  = NN + 1
+            ELSE
+              NSHEL0A          = NSHEL0A + 1
+
+              KSTRT0A(NSHEL0A) = NSHEL0A
+              KATM0A (NSHEL0A) = IC
+              EX0A   (NSHEL0A) = EXB*0.5D+00
+              KNG0A  (NSHEL0A) = 1
+              KTYP0A (NSHEL0A) = IL
+!             KLOC0A (NSHEL0A) = LOC + 1
+              KLOC0A (NSHEL0A) = NSHEL0A
+
+              FACS = PI32/(EXB*SQRT(EXB))
+              FACP = 0.5000d0*FACS/EXB
+              FACD = 0.7500d0*FACS/(EXB*EXB)
+              FACF = 1.8750d0*FACS/(EXB*EXB*EXB)
+
+              IF(IL == 1) THEN
+                COF0A (NSHEL0A) = 1.0D+00/SQRT(FACS)
+                KMIN0A(NSHEL0A) = 1
+                KMAX0A(NSHEL0A) = 1
+              ELSEIF(IL == 2) THEN
+                COF0A (NSHEL0A) = 1.0D+00/SQRT(FACP)
+                KMIN0A(NSHEL0A) = 2
+                KMAX0A(NSHEL0A) = 4
+              ELSEIF(IL == 3) THEN
+                COF0A (NSHEL0A) = 1.0D+00/SQRT(FACD)
+                KMIN0A(NSHEL0A) = 5
+                KMAX0A(NSHEL0A) = 10
+              ELSEIF(IL == 4) THEN
+                CALl ABRT
+              ENDIF
+ 
+              LOC   = LOC + NBFS(IL)
+C
+C             RESET
+C
+              EXA   = EXC
+              EXB   = EXA
+              NN    = 1
+            ENDIF
+          ENDDO
+C
+          EXC = EXA*0.5D+00
+          IF(SF*EXC.LE.EXA) THEN
+            NSHEL0A        = NSHEL0A + 1
+
+            KSTRT0A(NSHEL0A) = NSHEL0A
+            KATM0A (NSHEL0A) = IC
+            EX0A   (NSHEL0A) = EXB*0.5D+00
+            KNG0A  (NSHEL0A) = 1
+            KTYP0A (NSHEL0A) = IL
+!           KLOC0A (NSHEL0A) = LOC + 1
+            KLOC0A (NSHEL0A) = NSHEL0A
+
+            FACS = PI32/(EXB*SQRT(EXB))
+            FACP = 0.5000d0*FACS/EXB
+            FACD = 0.7500d0*FACS/(EXB*EXB)
+
+            IF(IL == 1) THEN
+              COF0A (NSHEL0A) = 1.0D+00/SQRT(FACS)
+              KMIN0A(NSHEL0A) = 1
+              KMAX0A(NSHEL0A) = 1
+            ELSEIF(IL == 2) THEN
+              COF0A (NSHEL0A) = 1.0D+00/SQRT(FACP)
+              KMIN0A(NSHEL0A) = 2
+              KMAX0A(NSHEL0A) = 4
+            ELSEIF(IL == 3) THEN
+              COF0A (NSHEL0A) = 1.0D+00/SQRT(FACD)
+              KMIN0A(NSHEL0A) = 5
+              KMAX0A(NSHEL0A) = 10
+            ENDIF
+
+            LOC   = LOC + NBFS(IL)
+          ENDIF
+
+        ENDDO
+
+        IEN = NSHEL0A
+        NN  = IEN - IST + 1
+        N3  = 3*NN
+
+        IJ = 0
+        DO I=IST,IEN
+          AI = EX0A(I)+EX0A(I)
+          DO J=IST,IEN
+            IJ = IJ + 1
+            AJ = EX0A(J)+EX0A(J)
+
+            XMAT(IJ) = FCT*SQRT((AI+AJ)/(AI*AJ))
+!           print *,xmat(ij)
+          ENDDO
+        ENDDO
+
+        CALL DSYEV('V','U',NN,XMAT,NN,EIG,WRK,N3,INFO)
+
+        DO I=1,NN
+!               print *,i,eig(i)
+          IF(ABS(EIG(I)) > QMTTOL) THEN
+            NQMT0A = NQMT0A + 1
+
+            KATM_QMT0A(NQMT0A) = IC
+            DO J=1,NN
+              TQ(J+IST-1,NQMT0A) = XMAT((I-1)*NN+J)
+            ENDDO
+          ENDIF
+        ENDDO
+      ENDDO
+!                            tq = 0.0d0
+!                            do i=1,nshel0a
+!                              tq(i,i) = 1.0d0
+!                            enddo
+
+      NSHEL = NSHEL0A
+C
+C     CONSTRUCT FMAT
+C
+      ALLOCATE(RLN(NRAD),WGHT(NRAD),WK(NSHEL0A),FMAT(NQMT0A,NRAD))
+
+      CALL RSM_GMSRAD(NAT,ZAN,GMSRAD)
+
+      CALL RSM_FITGRID(NRAD,RLN,WGHT)
+
+      DO IRAD=1,NRAD
+        R1 = RLN(IRAD)
+        R2 = R1*R1
+        R4 = R2*R2
+        R6 = R2*R4
+
+        DO II = 1,NSHEL0A
+          LIT  = KTYP0A(II)
+          I1   = KSTRT0A(II)
+          I2   = I1 + KNG0A(II) - 1
+          IATM = KATM0A(II)
+C
+C         FACTOR
+C
+          RVDW0 = GMSRAD(IATM)/2.0D+00
+          RVDW1 = GMSRAD(IATM)/4.0D+00
+          AFACT = 4.0D+00*LOG(10.0D+00)*((RVDW1/RVDW0)**12.0D+00)
+
+          IF(LIT == 1) THEN
+            VAL = 0.0D+00
+            DO IG=I1,I2
+              DO JG=I1,I2
+                ZETA = EX0A(IG)   + EX0A(JG)
+                CSI  = COF0A(IG) * COF0A(JG)
+
+                VAL = VAL + CSI*EXP(-ZETA*R2)
+              ENDDO
+            ENDDO
+            VAL = VAL*EXP(-AFACT*((RVDW0/R1)**12.0D+00))
+!         if(ii == 1) print *,r1,1.0d0/(1.0D+00+EXP(-AFACT*(R1-RVDW0)))
+          ELSEIF(LIT == 2) THEN
+            VAL = 0.0D+00
+            DO IG=I1,I2
+              DO JG=I1,I2
+                ZETA = EX0A(IG)   + EX0A(JG)
+                CSI  = COF0A(IG) * COF0A(JG)
+
+                VAL = VAL + CSI*EXP(-ZETA*R2)
+              ENDDO
+            ENDDO
+            VAL = VAL*EXP(-AFACT*((RVDW0/R1)**12.0D+00))
+          ELSEIF(LIT == 3) THEN
+            VAL = 0.0D+00
+            DO IG=I1,I2
+              DO JG=I1,I2
+                ZETA = EX0A(IG)   + EX0A(JG)
+                CSI  = COF0A(IG) * COF0A(JG)
+
+                VAL = VAL + CSI*EXP(-ZETA*R2)
+              ENDDO
+            ENDDO
+            VAL = VAL*EXP(-AFACT*((RVDW0/R1)**12.0D+00))
+          ENDIF
+
+          WK(II) = VAL
+        ENDDO
+
+        DO II=1,NQMT0A
+          VAL = 0.0D+00
+          DO JJ=1,NSHEL0A
+            VAL = VAL + TQ(JJ,II)*WK(JJ)
+          ENDDO
+
+          FMAT(II,IRAD) = VAL
+
+!         print *,ii,r1,val
+        ENDDO
+      ENDDO
+
+!      call abrt
+C
+C
+C
+      CALL RSM_SETTRN(TRN1,TRN2,TRN3)
+
+      CALL RSM_PUTABS(KSTRT0A,KATM0A,KTYP0A,KNG0A,KLOC0A,KMIN0A,KMAX0A,
+     *                KATM_QMT0A,EX0A,COF0A,TQ,TRN1,TRN2,TRN3,FMAT)
+C
+      DEALLOCATE(KSTRT0A,KATM0A,KTYP0A,KNG0A,KLOC0A,KMIN0A,KMAX0A,EX0A,
+     *           COF0A,KATM_QMT0A,TQ,EXX)
+      DEALLOCATE(RLN,WGHT,WK,FMAT)
+      DEALLOCATE(XMAT,EIG,WRK,GMSRAD)
+C
+      RETURN
+      END
+
+C*MODULE RSM_SDDUTL  *DECK RSM_SRTABS
+C>
+C>    @brief   sort ABS based on the -exponents
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   N: the data size
+C>             RA: the data array of -exponents
+C>
+      SUBROUTINE RSM_SRTABS(N,RA)
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: N
+      DOUBLE PRECISION, INTENT(INOUT) :: RA(N)
+C
+      INTEGER                :: I, J, L, IR
+      DOUBLE PRECISION       :: RRA
+
+      IF(N == 1) RETURN
+
+      L=N/2+1
+      IR=N
+ 10   CONTINUE
+        IF (L .GT. 1) THEN
+          L=L-1
+          RRA=RA(L)
+        ELSE
+          RRA=RA(IR)
+          RA(IR)=RA(1)
+          IR=IR-1
+          IF (IR .EQ. 1) THEN
+            RA(1)=RRA
+            GOTO 900
+          ENDIF
+        ENDIF
+C
+        I=L
+        J=L+L
+ 20     IF (J .LE. IR) THEN
+          IF(J .LT. IR) THEN
+            IF(RA(J) .LT. RA(J+1))J=J+1
+          ENDIF
+          IF(RRA.LT.RA(J))THEN
+            RA(I)=RA(J)
+            I=J
+            J=J+J
+          ELSE
+            J=IR+1
+          ENDIF
+          GOTO 20
+        ENDIF
+        RA(I)=RRA
+        GOTO 10
+C
+ 900  CONTINUE
+C
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_PRTABS
+C>
+C>    @brief   print out the information of ABSs
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IW: the file number of output file
+C>             MASWRK: master node or not
+C>
+      SUBROUTINE RSM_PRTABS(IW,MASWRK)
+C
+      USE ABSMOD, ONLY : EX0A,COF0A,KSTRT0A,KATM0A,KTYP0A,KNG0A,KLOC0A,
+     *                   KMIN0A,KMAX0A,NSHEL0A
+      USE RSMSED, ONLY : NAT, ANAM
+C
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN   ) :: IW
+      LOGICAL, INTENT(IN   ) :: MASWRK
+C
+      INTEGER, ALLOCATABLE   :: NS(:), KS(:) 
+C
+      DOUBLE PRECISION       :: LABEL(3)
+      DATA LABEL/8HS       ,8HP       ,8HD       /
+C
+      INTEGER                :: IAT, II, ISH, NS1, NS2, I1, I2, ITYP, IG
+      DOUBLE PRECISION       :: PI, AI, COEF, EE, FACTS, FACTP, FACTD, 
+     *                          C1
+C
+      ALLOCATE(NS(NAT),KS(NAT))
+
+      PI = ACOS(-1.0D+00)
+C
+C     ----- PRINT OUT THE BASIS FUNCTIONS USED -----
+C
+      IF(MASWRK) THEN
+        WRITE (IW,9080)
+
+        WRITE (IW,9110)
+C
+        NS = 0
+        DO IAT=1,NAT
+          DO II=1,NSHEL0A
+            IF(KATM0A(II) == IAT) NS(IAT) = NS(IAT) + 1
+          ENDDO
+        ENDDO
+
+        KS(1) = 1
+        DO IAT=2,NAT
+          KS(IAT) = KS(IAT-1) + NS(IAT-1)
+        ENDDO
+C
+        DO 1420 IAT = 1,NAT
+           WRITE (IW,9120) ANAM(IAT)
+           NS1 = KS(IAT)
+           NS2 = NS1+NS(IAT)-1
+
+           DO 1400 ISH = NS1,NS2
+              WRITE (IW,9130)
+              I1 = KSTRT0A(ISH)
+              I2 = I1+KNG0A(ISH)-1
+              ITYP = KTYP0A(ISH)
+C
+C       PRINT ALL GAUSSIAN EXPONENTS AND CONTRACTION COEFS IN THIS AO
+C
+              DO 1380 IG = I1,I2
+C
+C         -ITYP- IS AN INDEX INTO THE TABLE OF -LABEL- VALUES ABOVE.
+C         1-7=S,P,D,F,G,H,I AND 8=L ARE THE BASIC TYPES OF MOST SETS.
+C         9-27 ARE ARCHAIC UNDOCUMENTED STO SUBSHELLS STRINGS, WHICH
+C         CONSIST OF S,P,D,L AND UNIMPLEMENTED -M- SHELLS.
+C
+                 AI   = EX0A(IG)
+                 COEF = COF0A(IG)
+            
+                 EE    = AI+AI
+                 FACTS = (PI/EE)**0.75D+00
+                 GO TO (1280,1290,1300), ITYP
+C
+ 1280            CONTINUE
+                 C1=COEF*FACTS
+                 WRITE(IW,9140) ISH,LABEL(ITYP),IG,AI,C1
+C
+                 GO TO 1380
+C
+ 1290            CONTINUE
+                 FACTP = SQRT(0.5000d0/EE)*FACTS
+                 C1=COEF*FACTP
+                 WRITE(IW,9140) ISH,LABEL(ITYP),IG,AI,C1
+C
+                 GO TO 1380
+C
+ 1300            CONTINUE
+                 FACTD = SQRT(0.7500d0/(EE*EE))*FACTS
+                 C1=COEF*FACTD
+                 WRITE(IW,9140) ISH,LABEL(ITYP),IG,AI,C1
+C
+                 GO TO 1380
+C
+ 1380         CONTINUE
+C              END LOOP OVER SHELLS FOR THIS ATOM
+ 1400      CONTINUE
+C              END LOOP OVER ATOMS
+ 1420   CONTINUE
+      ENDIF
+
+      DEALLOCATE(NS,KS)
+
+      RETURN
+ 9080 FORMAT(/5X,19(1H-)/5X,'AUXILIARY BASIS SET'/5X,19(1H-))
+ 9085 FORMAT(/5X,'ATOMIC BASIS SET LIBRARY'/5X,16(1H-))
+ 9090 FORMAT(1X,'THE CONTRACTED PRIMITIVE FUNCTIONS HAVE BEEN',
+     *          ' UNNORMALIZED')
+ 9100 FORMAT(1X,'THE CONTRACTED BASIS FUNCTIONS ARE NOW NORMALIZED',
+     *          ' TO UNITY')
+ 9110 FORMAT(/1X,' SHELL TYPE  PRIMITIVE        EXPONENT',
+     *       10X,'CONTRACTION COEFFICIENT(S)')
+ 9120 FORMAT(/1X,A8)
+ 9130 FORMAT(1X)
+C        BRETT SAYS MACMOLPLT HAS 5 COLUMN ASSUMPTION BETWEEN
+C        SHELL COUNTER AND BASIS TYPE, HENCE 3X,A2 IS THE ONLY
+C        RIGIDLY UNCHANGEABLE PART OF THIS FORMAT STATEMENT:
+ 9140 FORMAT(1X,I6,3X,A2,I7,F22.7,2F18.12)
+      END
+
+C*MODULE RSM_SDDUTL  *DECK RSM_SETTRN
+C>
+C>    @brief   prepare translation matrix
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   TRN1: CARTESIAN -> SPHERICAL 
+C>             TRN2: SPHERICAL -> CARTESIAN
+C>             TRN3: used to get spherical ABS
+C>
+      SUBROUTINE RSM_SETTRN(TRN1,TRN2,TRN3)
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(  OUT) :: TRN1(9,10),TRN2(10,9),
+     *                                   TRN3(10,10)
+C
+      DOUBLE PRECISION, PARAMETER     :: SQRT3=1.73205080756888D+00
+C
+      INTEGER               :: I, J
+C
+      TRN1 = 0.0D+00
+C
+      TRN1( 1, 1) = 1.0D+00
+C
+      TRN1( 2, 2) = 1.0D+00
+      TRN1( 3, 3) = 1.0D+00
+      TRN1( 4, 4) = 1.0D+00
+C
+      TRN1( 5, 5) = 0.5D+00*SQRT3
+      TRN1( 5, 6) =-0.5D+00*SQRT3
+
+      TRN1( 6, 9) =       SQRT3
+
+      TRN1( 7, 5) =-0.5D+00
+      TRN1( 7, 6) =-0.5D+00
+      TRN1( 7, 7) = 1.0D+00
+
+      TRN1( 8,10) =       SQRT3
+      TRN1( 9, 8) =       SQRT3
+C
+      DO I=1,10
+        DO J=1,9
+          TRN2(I,J) = TRN1(J,I)
+        ENDDO
+      ENDDO
+C
+      DO I=1,10
+        DO J=1,10
+          TRN3(J,I) = 0.0D+00
+        ENDDO
+      ENDDO
+      
+      TRN3(1,1) = 1.0D+00
+
+      TRN3(2,2) = 1.0D+00
+      TRN3(3,3) = 1.0D+00
+      TRN3(4,4) = 1.0D+00
+ 
+      TRN3(5,5) = 1.0D+00
+      TRN3(5,6) =-0.5D+00 
+      TRN3(5,7) =-0.5D+00
+      TRN3(6,5) =-0.5D+00
+      TRN3(6,6) = 1.0D+00
+      TRN3(6,7) =-0.5D+00
+      TRN3(7,5) =-0.5D+00
+      TRN3(7,6) =-0.5D+00
+      TRN3(7,7) = 1.0D+00
+      TRN3(8,8) = 3.0D+00
+      TRN3(9,9) = 3.0D+00
+      TRN3(10,10) = 3.0D+00
+
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_FITINP
+C>
+C>    @brief   read input parameters of $FITINP
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IR: the file number of input file
+C>             MASWRK: master node or not
+C>
+      SUBROUTINE RSM_FITINP(IR,MASWRK)
+
+      USE RISM_IO,  ONLY : IW
+      USE ABSMOD,   ONLY : NRAD, NMUESP, NMUREP, IFITU, XMNFIT, XMUMX
+
+      IMPLICIT NONE
+C
+      INTEGER, INTENT(IN   ) :: IR
+      LOGICAL, INTENT(IN   ) :: MASWRK
+C
+      INTEGER, PARAMETER     :: NNAM=6
+      DOUBLE PRECISION       :: QNAM(NNAM), ABSINP
+      INTEGER                :: KQNAM(NNAM)
+      DATA ABSINP/8HFITINP  /
+      DATA QNAM /8HNRAD    ,8HXMN     ,8HXMUMX   ,8HNMUESP  ,8HNMUREP  ,
+     *           8HIFITU   /
+      DATA KQNAM/         1,         3,         3,         1,         1,
+     *                    1/
+C
+      INTEGER                :: JRET
+      DOUBLE PRECISION       :: XMN
+C
+C     IFITU  = 0  No constraint in charge fitting
+C            = 1  Constraint so that d coefficient is positive (CPL 587)
+C            = 3  Constraint so that the density on each atomic site is positive
+
+      NRAD=501
+      XMN =0.3D+00
+      NMUREP = 4
+      IFITU  = 3
+C
+C     ARIFIN's RECOMMENDED VALUES
+C
+      NMUESP = 6
+      XMUMX=1.0D+17
+
+      JRET=0
+      CALL NAMEIO(IR,JRET,ABSINP,NNAM,QNAM,KQNAM,
+     *                NRAD,XMN,XMUMX,NMUESP,NMUREP,IFITU,
+     *         0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,
+     *     0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,
+     *     0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0)
+C
+      XMNFIT = XMN
+C
+      IF(NMUESP <= 2) THEN
+        IF(MASWRK)WRITE(IW,'(2X,A32)')'NMUESP HAS TO BE GREATER THAN 3!'
+        CALL ABRT
+      ENDIF
+C
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_ESP1
+C>
+C>    @brief   the first step of charge fitting
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_ESP1
+C
+      USE ABSMOD,  ONLY : NQMT0A
+      USE RISM_IO, ONLY : IRSSQF
+C
+      IMPLICIT NONE
+C
+      INTEGER             :: L01, L02
+C
+      DOUBLE PRECISION, ALLOCATABLE :: XMAT(:),ZMAT(:)
+C
+      L01 = NQMT0A
+      L02 = NQMT0A*NQMT0A
+      ALLOCATE(XMAT(L02),ZMAT(L01))
+C
+C     INITIALIZE
+C
+      XMAT = 0.0D+00
+      CALL SEQREW(IRSSQF)
+C
+      CALL RSM_ESPZRO(ZMAT)
+C
+      CALL RSM_ESPONE(XMAT)
+      CALL RSM_ESPTWO(IRSSQF)
+C
+      CALL RSM_DAWR(XMAT,L02,39,0)
+      CALL RSM_DAWR(ZMAT,L01,45,0)
+C
+      DEALLOCATE(XMAT,ZMAT)
+C
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_ESP2
+C>
+C>    @brief   the second step of charge fitting
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IRSSQF: the file number of the sequential file
+C>             NUM: the number of AOs
+C>             NQMT0A: the number of ABSs
+C>             IC: working array
+C>             PA: density matrix
+C>             YMAT: Y matrix 
+C>                  (please see Chem. Phys. Lett., 587, 113 (2013).)
+C>
+      SUBROUTINE RSM_ESP2(IRSSQF,NUM,NQMT0A,IC,PA,YMAT)
+C
+      USE RISM_MOD, ONLY : MASWRK, GOPARR, MASTER
+C
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: IRSSQF, NUM, NQMT0A
+      INTEGER,          INTENT(  OUT) :: IC(NUM,*)
+      DOUBLE PRECISION, INTENT(IN   ) :: PA(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: YMAT(NQMT0A)
+C
+      INTEGER                :: I, J, K, IJ
+      DOUBLE PRECISION       :: VAL, SUMVAL
+C
+      IJ = 0
+      DO I=1,NUM
+        DO J=1,I
+          IJ = IJ + 1
+
+          IC(I,J) = IJ
+          IC(J,I) = IJ
+        ENDDO
+      ENDDO
+
+      YMAT = 0.0D+00
+      CALL SEQREW(IRSSQF)
+      IF(MASWRK) THEN
+   10   CONTINUE
+          READ(IRSSQF,END=20) I,J,K,VAL
+          IJ=IC(I,J)
+          SUMVAL=PA(IJ)*VAL
+
+          IF (J.NE.I) SUMVAL=SUMVAL+SUMVAL
+          YMAT(K)=YMAT(K)+SUMVAL
+          GOTO 10
+   20   CONTINUE
+
+      ENDIF
+
+      IF (GOPARR) CALL RSM_BCAST(916,'F',YMAT,NQMT0A,MASTER)
+C
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_CONFIT1
+C>
+C>    @brief   the constrained & restrained fitting (type I)
+C>             (Please see Bull. Chem. Soc. Jpn., 91, 1540 (2018).)
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   XMAT: X matrix
+C>             YMAT: Y matrix
+C>             ZMAT: Z matrix (block matrix in Q matrix)
+C>             QMAT: Q matrix 
+C>             DMAT: the fitting coefficient
+C>             QU: cSED charge
+C>             REF: the number of electrons
+C>            (please see Chem. Phys. Lett., 587, 113 (2013).)
+C>
+      SUBROUTINE RSM_CONFIT1(XMAT,YMAT,ZMAT,QMAT,DMAT,QU,REF)
+
+      USE RISM_MOD, ONLY : MASWRK
+      USE ABSMOD,   ONLY : NSHEL0A, KATM0A, XMUMX, NMUESP, XMNFIT
+      USE RISM_IO,  ONLY : IW, IP
+      USE RSMSED,   ONLY : NAT, ANAM, ZAN
+
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(IN   ) :: YMAT(*), ZMAT(*), REF
+      DOUBLE PRECISION, INTENT(INOUT) :: XMAT(NSHEL0A,*)
+      DOUBLE PRECISION, INTENT(  OUT) :: DMAT(NSHEL0A+1),QU(*),
+     *                                   QMAT(NSHEL0A+1,NSHEL0A+1)
+C
+      LOGICAL  CONV0, CONV1, CONV2, CONV3
+      INTEGER, ALLOCATABLE  :: IPIV(:)
+      DOUBLE PRECISION, ALLOCATABLE   :: GMAT2(:,:),QOLD(:,:),
+     *                                   WRK1(:),WRK3(:),
+     *                                   RMAT(:),PMATN(:),WK2(:)
+      DOUBLE PRECISION, ALLOCATABLE   :: WMT(:,:)
+      INTEGER, ALLOCATABLE  :: IDUM1(:), IDUM2(:)
+C
+      INTEGER               :: NSHL, NSHLP, ITER, NMU, INFO, 
+     *                         I, J, IJ, IAT, IATM
+      DOUBLE PRECISION      :: FPI, ALP, XMU2, XMUMX2, DXMU, DDD, SUM,
+     *                         DIFF, DIFF2, DIFF3, XLAM1, TMP
+C
+      FPI = 4.0D+00*ACOS(-1.0D+00)
+      ALP =-1.0D+00 
+
+      NSHL  = NSHEL0A
+      NSHLP = NSHL + 1 
+C
+C     PARAMETER FOR RLN
+C
+      ALLOCATE(IPIV(NSHLP),
+     *         GMAT2(NSHLP,NSHLP),
+     *         QOLD(NSHLP,NSHLP))
+      ALLOCATE(WRK1(NSHLP*3),WRK3(NSHLP*NSHLP),
+     *         RMAT(NSHLP),PMATN(NSHLP),WK2(NSHLP))
+C
+      NMU = NMUESP
+C
+C     START ITERATION
+C
+      XMU2   = 4.0D+00
+      XMUMX2 = XMUMX**(1.0D+00/REAL(NMU-2,8))
+      IF(XMUMX == 0.0D+00) THEN
+        XMU2 = 0.0D+00
+        XMUMX2 = 0.0D+00
+      ENDIF
+C
+C
+C
+      DXMU = 1.25D+00
+      QOLD = 0.0D+00
+      DMAT  = 0.0D+00
+      DIFF  = 1.0D+05
+      DIFF2 = 1.0D+05
+
+      LOOP1 : DO ITER=1,500000000
+C
+C       PREPARE GMAT
+C
+        GMAT2 = 0.0D+00
+        DO I=1,NSHL
+          DDD        = DMAT(I)*XMU2
+          IF(DDD < 0.0D+00) GMAT2(I,I) = ABS(DDD)**(NMU-2)
+        ENDDO
+C
+C       PREPARE QMAT
+C
+        DO I=1,NSHL
+          DO J=1,I
+            QMAT(J,I) = XMAT(J,I) - GMAT2(J,I)
+          ENDDO
+        ENDDO
+        
+        DO I=1,NSHL
+          QMAT(I,NSHLP) = -ZMAT(I)
+        ENDDO
+
+        QMAT(NSHLP,NSHLP) = 0.0D+00
+C
+C       PREPARE RMAT(=QMAT*DMAT)
+C
+        CALL DSYMV('U',NSHLP,1.0D+00,QMAT,NSHLP,DMAT,1,0.0D+00,RMAT,1)
+
+        DO I=1,NSHL
+          RMAT(I) = RMAT(I) - YMAT(I) 
+        ENDDO
+        RMAT(NSHLP) = RMAT(NSHLP) + REF 
+C
+C       GET BAINV 
+C
+        WRK3 = 0.0D+00
+        IJ = 0
+        DO I=1,NSHL
+          DO J=1,I
+            IJ = IJ + 1
+            WRK3(IJ) = XMAT(J,I) - REAL(NMU-1,8)*GMAT2(J,I)
+          ENDDO
+        ENDDO
+
+        DO I=1,NSHL
+          IJ = IJ + 1
+          WRK3(IJ) = -ZMAT(I)
+        ENDDO
+        IJ = IJ + 1
+        WRK3(IJ) = 0.0D+00
+
+        IF(DIFF2 <= 1.0D-18) THEN
+          IJ = 1
+          DO I=1,NSHLP
+            WRK3(IJ) = WRK3(IJ) + ALP
+            IJ = IJ + I + 1
+          ENDDO
+
+          DO I=1,NSHLP
+            RMAT(I) = RMAT(I) + ALP*PMATN(I)
+          ENDDO
+        ENDIF
+C
+C       GET INVERSE
+C
+        IJ = 0
+        Allocate(WMT(NSHLP,NSHLP))
+        DO I=1,NSHLP
+          DO J=1,I
+            IJ = IJ + 1
+            WMT(I,J) = WRK3(IJ)
+            WMT(J,I) = WRK3(IJ)
+          ENDDO
+        ENDDO
+
+      CALL DGETRF(NSHLP,NSHLP,WMT,NSHLP,IPIV,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRF in SEDONE'
+                  stop
+          endif
+      CALL DGETRI(NSHLP,WMT,NSHLP,IPIV,WK2,NSHLP,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRI in SEDONE'
+                  stop
+          endif
+
+        IJ = 0
+        QMAT = 0.0D+00
+        DO I=1,NSHLP
+          DO J=1,I
+            IJ = IJ + 1
+C            QMAT(J,I) = WRK3(IJ)
+            QMAT(J,I) = WMT(J,I)
+          ENDDO
+        ENDDO
+
+        Deallocate(WMT)
+C
+C       GET PMATN (= QMAT*RMAT)
+C
+        CALL DSYMV('U',NSHLP,1.0D+00,QMAT,NSHLP,RMAT,1,0.0D+00,PMATN,1)
+C
+        DIFF = 0.0D+00
+        DO I=1,NSHLP
+          DO J=1,I-1
+            TMP = (QMAT(J,I)-QOLD(J,I))*(QMAT(J,I)-QOLD(J,I))
+            DIFF = DIFF + TMP + TMP
+
+            QOLD(J,I) = QMAT(J,I)
+          ENDDO
+          TMP = (QMAT(I,I)-QOLD(I,I))*(QMAT(I,I)-QOLD(I,I))
+          DIFF = DIFF + TMP
+
+!         if(MOD(ITER,5000) == 0)print *,qold(i,i),qmat(i,i),rmat(i)
+
+          QOLD(I,I) = QMAT(I,I)
+        ENDDO
+        DIFF = DIFF/REAL(NSHLP*NSHLP,8)
+
+        DIFF2 = 0.0D+00
+        DO I=1,NSHL
+          DIFF2 = DIFF2 + RMAT(I)*RMAT(I)
+        ENDDO
+        DIFF2 = DIFF2/REAL(NSHL,8)
+
+        DIFF3 = 0.0D+00
+        DO I=1,NSHLP
+          DIFF3 = DIFF3 + PMATN(I)*PMATN(I)
+        ENDDO
+        DIFF3 = DIFF3/REAL(NSHLP,8)
+
+!       IF(MOD(ITER,5000) == 1 .AND. MASWRK ) THEN
+!         WRITE(*,'(I10,F12.1,3E20.10)')
+!    *    ITER,XMU2,DIFF,DIFF2,DIFF3
+!       ENDIF
+
+        CONV1 = DIFF2 < 5.0D-18 .and. DIFF  < 1.0D-10
+        CONV2 = DIFF2 < 5.0D-18 .and. DIFF3 < 1.0D-15
+        CONV3 = DIFF2 < 1.0D-20 .and. DIFF3 < 1.0D-10
+        IF(CONV1 .or. (CONV2 .and. DIFF < 1.0D-09) .or. CONV3) THEN
+          IF(XMU2 >= XMUMX2) EXIT LOOP1
+
+          XMU2 = MIN(XMU2 * DXMU,XMUMX2)
+        ENDIF
+
+        IF(ITER == 1) THEN
+          DO I=1,NSHLP
+            DMAT(I) =-PMATN(I)
+          ENDDO
+        ELSE
+          DO I=1,NSHLP
+            TMP = PMATN(I)
+
+            DMAT(I) = DMAT(I)-XMNFIT*TMP
+          ENDDO
+        ENDIF
+      ENDDO LOOP1
+C
+C       PREPARE QMAT and SAVE DMAT
+C
+      DO I=1,NSHLP
+        DO J=1,I
+          QMAT(I,J) = QMAT(J,I)
+        ENDDO
+      ENDDO
+
+      DO I=1,NSHL
+        DO J=1,NSHL
+          XMAT(J,I)=XMAT(J,I) - GMAT2(J,I)
+        ENDDO
+      ENDDO
+C
+C       GET XINV
+C
+      CALL DGETRF(NSHL,NSHL,XMAT,NSHL,IPIV,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRF in SEDONE'
+                  stop
+          endif
+      CALL DGETRI(NSHL,XMAT,NSHL,IPIV,WK2,NSHL,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRI in SEDONE'
+                  stop
+          endif
+
+      XLAM1 = 0.0D+00
+      DO I=1,NSHL
+        SUM = 0.0D+00
+        DO J=1,NSHL
+          SUM = SUM + XMAT(J,I)*YMAT(J)
+        ENDDO
+        XLAM1 = XLAM1 + SUM*ZMAT(I)
+      ENDDO
+C
+C     GET QU
+C
+      DO IAT=1,NAT
+        QU(IAT)=0.0D+00
+      ENDDO
+C
+C     Number of electron
+C
+      SUM=0.0D+00
+      DO I=1,NSHL
+         IATM = KATM0A(I)
+         QU(IATM)=QU(IATM)+DMAT(I)*ZMAT(I)
+
+         SUM=SUM+DMAT(I)*ZMAT(I)
+      ENDDO
+C
+C     Get Charges for solute site
+C
+      DO IATM=1,NAT
+         QU(IATM)=ZAN(IATM)-QU(IATM)
+      ENDDO
+C
+C     Print out
+C
+      IF(MASWRK) THEN
+!       WRITE(IW,'(I10,F12.1,3E20.10)') ITER,XMU2,DIFF,DIFF2,DIFF3
+        WRITE(IW,*) ''
+        WRITE(IW,'(12X,''NUMBER OF ELECTRON'')')
+        WRITE(IW,'(12X,''>> CONSTRAINT ?'')')
+        WRITE(IW,'(16X,''NO.'',F10.5,3X,''YES.'',F10.5)') XLAM1,SUM
+        WRITE(IW,9980)
+        DO IAT=1,NAT
+          WRITE(IW,9970) IAT,ANAM(IAT),ZAN(IAT),QU(IAT)-ZAN(IAT),QU(IAT)
+        ENDDO
+        WRITE(IW,*) ''
+      ENDIF
+
+C
+      DEALLOCATE(IPIV,GMAT2,QOLD)
+      DEALLOCATE(WRK1,WRK3,RMAT,PMATN,WK2)
+C
+ 9970 FORMAT(10X,I4,2X,A8,2X,F5.2,2(2X,F12.6))
+ 9980 FORMAT(/,10X,5(1H-),' TOTAL GROSS POPULATION ON ATOMS '
+     1,5(1H-),//,18X,'SITE',8X,'Z',10X,'ELEC',10X,'GROSS',/)
+ 9999 FORMAT(/,10X,14(1H-),/,10X,'FITTING CHARGE  ',
+     *                     /,10X,14(1H-))
+C
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_CONFIT2
+C>
+C>    @brief   the constrained & restrained fitting (type II)
+C>             (Please see Bull. Chem. Soc. Jpn., 91, 1540 (2018).)
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   XMAT: X matrix
+C>             YMAT: Y matrix
+C>             ZMAT: Z matrix (block matrix in Q matrix)
+C>             QMAT: Q matrix
+C>             DMAT: the fitting coefficient
+C>             QU: cSED charge
+C>             REF: the number of electrons
+C>            (please see Chem. Phys. Lett., 587, 113 (2013).)
+C>
+
+      SUBROUTINE RSM_CONFIT2(XMAT,YMAT,ZMAT,QMAT,DMAT,QU,REF)
+C
+      USE RISM_MOD, ONLY : MASWRK
+      USE ABSMOD,   ONLY : NQMT0A, NRAD, NSHEL0A, NMUESP,
+     *                     KATM_QMT0A, XMNFIT, XMUMX, FMAT
+      USE RISM_IO,  ONLY : IW, IP
+      USE RSMSED,   ONLY : NAT, ANAM, ZAN
+C
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(IN   ) :: YMAT(*), ZMAT(*), REF
+      DOUBLE PRECISION, INTENT(  OUT) :: QMAT(NQMT0A+1,NQMT0A+1),QU(*)
+      DOUBLE PRECISION, INTENT(INOUT) :: XMAT(NQMT0A,*),DMAT(NQMT0A+1)
+C
+      LOGICAL  CONV1, CONV2, CONV3
+      INTEGER, ALLOCATABLE :: IPIV(:),ISTRT(:),IEND(:)
+      DOUBLE PRECISION, ALLOCATABLE   :: GMAT2(:,:),RLN(:),QOLD(:,:),
+     *                                   WGHT(:),WRK1(:),WRK3(:),
+     *                                   RMAT(:),PMATN(:),WK2(:)
+      DOUBLE PRECISION, ALLOCATABLE   :: WMT(:,:)
+
+      INTEGER              :: NSHL, NSHLP, IRAD, II, JJ, LIT, I1, I2,
+     *                        IG, JG, I, J, IJ, IPRTB, ITER, IATM, 
+     *                        IATM0, INFO, NMU
+      DOUBLE PRECISION     :: ALP, ZETA, CSI, XLAM1, DIFF, DIFF2, DIFF3,
+     *                        VAL, R1, R2, R4, R6, FCT1, FCT2, FCT3, 
+     *                        XMU2, XMUMX2, DXMU
+C
+      ALP =-1.0D+00
+    
+      NSHL  = NQMT0A
+      NSHLP = NSHL + 1 
+C
+C     PARAMETER FOR RLN
+C
+      ALLOCATE(IPIV(NSHLP),
+     *         GMAT2(NSHLP,NSHLP),ISTRT(NAT),IEND(NAT),RLN(NRAD),
+     *         QOLD(NSHLP,NSHLP),WGHT(NRAD))
+      ALLOCATE(WRK1(NSHLP*3),WRK3(NSHLP*NSHLP),
+     *         RMAT(NSHLP),PMATN(NSHLP),WK2(NSHLP))
+      Allocate(WMT(NSHLP,NSHLP))
+C
+      NMU = NMUESP
+C
+C     Prepare RLN and WGHT
+C
+      CALL RSM_FITGRID(NRAD,RLN,WGHT)
+
+      ISTRT(1) = 1
+      IEND (NAT) = NSHL
+      IATM0 = 1
+      DO II=1,NSHL
+        IATM = KATM_QMT0A(II)
+
+        IF(IATM > IATM0) THEN
+          IATM0 = IATM
+          ISTRT(IATM) = II
+        ENDIF
+      ENDDO
+
+      DO I=1,NAT-1
+        IEND(I) = ISTRT(I+1) - 1
+      ENDDO
+C
+C     START ITERATION
+C
+      XMU2   = 2.0D+00
+      XMUMX2 = XMUMX**(1.0D+00/REAL(NMU-2,8))
+
+      IF(XMUMX == 0.0D+00) THEN
+        XMU2 = 0.0D+00
+        XMUMX2 = 0.0D+00
+      ENDIF
+C
+C
+C
+      DXMU = 1.25D+00
+      QOLD = 0.0D+00
+      DMAT = 0.0D+00
+      DIFF  = 1.0D+05
+      DIFF2 = 1.0D+05
+
+      LOOP1 : DO ITER=1,500000000
+C
+C       PREPARE GMAT
+C
+        GMAT2 = 0.0D+00
+        DO IRAD=1,NRAD
+          FCT1 = WGHT(IRAD)
+
+          DO I=1,NAT
+            QU(I) = 0.0D+00
+          ENDDO
+  
+          DO I=1,NSHL
+            IATM = KATM_QMT0A(I)
+
+            QU(IATM) = QU(IATM) + DMAT(I)*FMAT(I,IRAD)
+          ENDDO
+
+          DO IATM=1,NAT
+            VAL = QU(IATM)*XMU2
+            IF(VAL < 0.0D+00) THEN
+
+              I1 = ISTRT(IATM)
+              I2 = IEND (IATM)
+
+              FCT2 = FCT1*(VAL**(NMU-2))
+              DO I=I1,I2
+                FCT3 = FCT2*FMAT(I,IRAD)
+                DO J=I1,I
+                  GMAT2(J,I) = GMAT2(J,I) + FCT3*FMAT(J,IRAD)
+                ENDDO
+              ENDDO
+            ENDIF
+          ENDDO
+        ENDDO
+C
+C       PREPARE QMAT
+C
+        DO I=1,NSHL
+          DO J=1,I
+            QMAT(J,I) = XMAT(J,I) - GMAT2(J,I)
+          ENDDO
+        ENDDO
+        
+        DO I=1,NSHL
+          QMAT(I,NSHLP) = -ZMAT(I)
+        ENDDO
+
+        QMAT(NSHLP,NSHLP) = 0.0D+00
+C
+C       PREPARE RMAT(=QMAT*DMAT)
+C
+        CALL DSYMV('U',NSHLP,1.0D+00,QMAT,NSHLP,DMAT,1,0.0D+00,RMAT,1)
+
+        DO I=1,NSHL
+          RMAT(I) = RMAT(I) - YMAT(I)
+        ENDDO
+        RMAT(NSHLP) = RMAT(NSHLP) + REF
+C
+C       GET BAINV 
+C
+        WRK3 = 0.0D+00
+        IJ = 0
+        DO I=1,NSHL
+          DO J=1,I
+            IJ = IJ + 1
+            WRK3(IJ) = XMAT(J,I) - REAL(NMU-1,8)*GMAT2(J,I)
+          ENDDO
+        ENDDO
+
+        DO I=1,NSHL
+          IJ = IJ + 1
+          WRK3(IJ) = -ZMAT(I)
+        ENDDO
+        IJ = IJ + 1
+        WRK3(IJ) = 0.0D+00
+!
+!       PERTURBATION PARAMETER (geodesy and geodynamics 2015 , vol 6 no 6 , 453-459)
+!
+        IPRTB = 0
+!       IF(DIFF2 <= 1.0D-18) THEN
+!         IPRTB = 1
+!
+!         IJ = 1
+!         DO I=1,NSHLP
+!           WRK3(IJ) = WRK3(IJ) + ALP
+!           IJ = IJ + I + 1
+!         ENDDO
+!
+!         DO I=1,NSHLP
+!           RMAT(I) = RMAT(I) + ALP*PMATN(I)
+!         ENDDO
+!       ENDIF
+C
+C       GET INVERSE
+C
+C        CALL DSPTRF('U',NSHLP,WRK3,IPIV,info)
+C           if(info.ne.0) then
+C                  print *,'ERRROR at DSPTRF in SEDONE'
+C                  print *,'INFO=',info
+C                  stop
+C          endif
+C        CALL DSPTRI('U',NSHLP,WRK3,IPIV,WK2,info)
+C          if(info.ne.0) then
+C                  print *,'ERRROR at DSPTRI in SEDONE'
+C                  stop
+C          endif
+
+        IJ = 0
+CC        Allocate(WMT(NSHLP,NSHLP))
+        DO I=1,NSHLP
+          DO J=1,I
+            IJ = IJ + 1
+            WMT(I,J) = WRK3(IJ)
+            WMT(J,I) = WRK3(IJ)
+          ENDDO
+        ENDDO
+
+      CALL DGETRF(NSHLP,NSHLP,WMT,NSHLP,IPIV,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRF in SEDONE'
+                  stop
+          endif
+      CALL DGETRI(NSHLP,WMT,NSHLP,IPIV,WK2,NSHLP,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRI in SEDONE'
+                  stop
+          endif
+
+
+        IJ = 0
+        QMAT = 0.0D+00
+        DO I=1,NSHLP
+          DO J=1,I
+            IJ = IJ + 1
+C            QMAT(J,I) = WRK3(IJ)
+            QMAT(J,I) = WMT(J,I)
+          ENDDO
+        ENDDO
+
+CC        Deallocate(WMT)
+C
+C       GET PMATN (= QMAT*RMAT)
+C
+        CALL DSYMV('U',NSHLP,1.0D+00,QMAT,NSHLP,RMAT,1,0.0D+00,PMATN,1)
+C
+        DIFF = 0.0D+00
+        DO I=1,NSHLP
+          DO J=1,I-1
+            VAL = (QMAT(J,I)-QOLD(J,I))*(QMAT(J,I)-QOLD(J,I))
+            DIFF = DIFF + VAL + VAL
+
+            QOLD(J,I) = QMAT(J,I)
+          ENDDO
+          VAL = (QMAT(I,I)-QOLD(I,I))*(QMAT(I,I)-QOLD(I,I))
+          DIFF = DIFF + VAL
+
+!         if(MOD(ITER,5000) == 0)print *,qold(i,i),qmat(i,i),rmat(i)
+
+          QOLD(I,I) = QMAT(I,I)
+        ENDDO
+        DIFF = DIFF/REAL(NSHLP*NSHLP,8)
+
+        DIFF2 = 0.0D+00
+        DO I=1,NSHL
+          DIFF2 = DIFF2 + RMAT(I)*RMAT(I)
+        ENDDO
+        DIFF2 = DIFF2/REAL(NSHL,8)
+
+        DIFF3 = 0.0D+00
+        DO I=1,NSHLP
+          DIFF3 = DIFF3 + PMATN(I)*PMATN(I)
+        ENDDO
+        DIFF3 = DIFF3/REAL(NSHLP,8)
+
+!       IF(MOD(ITER,5000) == 1 .AND. MASWRK ) THEN
+!         WRITE(*,'(I10,F12.1,3E20.10)')
+!    *    ITER,XMU2,DIFF,DIFF2,DIFF3
+!       ENDIF
+
+        CONV1 = DIFF2 < 5.0D-18 .and. DIFF  < 1.0D-10
+        CONV2 = DIFF2 < 5.0D-18 .and. DIFF3 < 1.0D-15
+        CONV3 = DIFF2 < 1.0D-20 .and. DIFF3 < 1.0D-10
+        IF(CONV1 .or. (CONV2 .and. DIFF < 1.0D-09) .or. CONV3) THEN
+          IF(XMU2 >= XMUMX2) EXIT LOOP1
+
+          XMU2 = MIN(XMU2 * DXMU,XMUMX2)
+        ENDIF
+
+        IF(ITER == 1) THEN
+          DO I=1,NSHLP
+            DMAT(I) =-PMATN(I)
+          ENDDO
+        ELSE
+          DO I=1,NSHLP
+            DMAT(I) = DMAT(I)-XMNFIT*PMATN(I)
+          ENDDO
+        ENDIF
+      ENDDO LOOP1
+C
+C       PREPARE QMAT and SAVE DMAT
+C
+      IF(IPRTB == 0) THEN
+        DO I=1,NSHLP
+          DO J=1,I
+            QMAT(I,J) = QMAT(J,I)
+          ENDDO
+        ENDDO
+      ELSE
+        WRK3 = 0.0D+00
+        IJ = 0
+        DO I=1,NSHL
+          DO J=1,I
+            IJ = IJ + 1
+            WRK3(IJ) = XMAT(J,I) - REAL(NMU-1,8)*GMAT2(J,I)
+          ENDDO
+        ENDDO
+
+        DO I=1,NSHL
+          IJ = IJ + 1
+          WRK3(IJ) = -ZMAT(I)
+        ENDDO
+        IJ = IJ + 1
+        WRK3(IJ) = 0.0D+00
+
+C        CALL DSPTRF('U',NSHLP,WRK3,IPIV,info)
+C           if(info.ne.0) then
+C                  print *,'ERRROR at DSPTRF in SEDONE'
+C                  print *,'INFO=',info
+C                  stop
+C          endif
+C        CALL DSPTRI('U',NSHLP,WRK3,IPIV,WK2,info)
+C          if(info.ne.0) then
+C                  print *,'ERRROR at DSPTRI in SEDONE'
+C                  stop
+C          endif
+
+        IJ = 0
+CC        Allocate(WMT(NSHLP,NSHLP))
+        DO I=1,NSHLP
+          DO J=1,I
+            IJ = IJ + 1
+            WMT(I,J) = WRK3(IJ)
+            WMT(J,I) = WRK3(IJ)
+          ENDDO
+        ENDDO
+
+      CALL DGETRF(NSHLP,NSHLP,WMT,NSHLP,IPIV,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRF in SEDONE'
+                  stop
+          endif
+      CALL DGETRI(NSHLP,WMT,NSHLP,IPIV,WK2,NSHLP,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRI in SEDONE'
+                  stop
+          endif
+
+        IJ = 0
+        QMAT = 0.0D+00
+        DO I=1,NSHLP
+          DO J=1,I
+            IJ = IJ + 1
+C            QMAT(J,I) = WRK3(IJ)
+            QMAT(J,I) = WMT(J,I)
+C            QMAT(I,J) = WRK3(IJ)
+            QMAT(I,J) = WMT(I,J)
+          ENDDO
+        ENDDO
+      ENDIF
+
+CC      Deallocate(WMT)
+
+      DO I=1,NSHL
+        DO J=1,NSHL
+          XMAT(J,I)=XMAT(J,I) - GMAT2(J,I)
+        ENDDO
+      ENDDO
+!                return
+C
+C       GET XINV
+C
+      CALL DGETRF(NSHL,NSHL,XMAT,NSHL,IPIV,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRF in SEDONE'
+                  stop
+          endif
+      CALL DGETRI(NSHL,XMAT,NSHL,IPIV,WK2,NSHL,info)
+          if(info.ne.0) then
+                  print *,'ERRROR at DGETRI in SEDONE'
+                  stop
+          endif
+!                return
+
+      XLAM1 = 0.0D+00
+      DO I=1,NSHL
+        VAL = 0.0D+00
+        DO J=1,NSHL
+          VAL = VAL + XMAT(J,I)*YMAT(J)
+        ENDDO
+        XLAM1 = XLAM1 + VAL*ZMAT(I)
+      ENDDO
+!           return
+C
+C     GET QU
+C
+      DO I=1,NAT
+        QU(I)=0.0D+00
+      ENDDO
+!           return
+C
+C     Number of electron
+C
+      VAL=0.0D+00
+      DO I=1,NSHL
+         IATM = KATM_QMT0A(I)
+         QU(IATM)=QU(IATM)+DMAT(I)*ZMAT(I)
+
+         VAL=VAL+DMAT(I)*ZMAT(I)
+      ENDDO
+!           return
+C
+C     Get Charges for solute site
+C
+      DO IATM=1,NAT
+         QU(IATM)=ZAN(IATM)-QU(IATM)
+      ENDDO
+!         return
+        
+C
+C     Print out
+C
+      IF(MASWRK) THEN
+!       WRITE(IW,'(I10,F12.1,3E20.10)') ITER,XMU2,DIFF,DIFF2,DIFF3
+        WRITE(IW,*) ''
+        WRITE(IW,'(12X,''NUMBER OF ELECTRON'')')
+        WRITE(IW,'(12X,''>> CONSTRAINT ?'')')
+        WRITE(IW,'(16X,''NO.'',F10.5,3X,''YES.'',F10.5)') XLAM1,VAL
+        WRITE(IW,9980)
+        DO I=1,NAT
+          WRITE(IW,9970) I,ANAM(I),ZAN(I),QU(I)-ZAN(I),QU(I)
+        ENDDO
+        WRITE(IW,*) ''
+      ENDIF
+C
+      DEALLOCATE(IPIV,GMAT2,ISTRT,IEND,RLN,QOLD,WGHT)
+      DEALLOCATE(WRK1,WRK3,RMAT,PMATN,WK2)
+      Deallocate(WMT)
+C
+ 9970 FORMAT(10X,I4,2X,A8,2X,F5.2,2(2X,F12.6))
+ 9980 FORMAT(/,10X,5(1H-),' TOTAL GROSS POPULATION ON ATOMS '
+     1,5(1H-),//,18X,'SITE',8X,'Z',10X,'ELEC',10X,'GROSS',/)
+ 9999 FORMAT(/,10X,14(1H-),/,10X,'FITTING CHARGE  ',
+     *                     /,10X,14(1H-))
+C
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_FITGRID
+C>
+C>    @brief   prepare the grid for charge fitting
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   N: the number of grid points
+C>             R: grid points
+C>             W: the weight of the grid point
+C>
+
+      SUBROUTINE RSM_FITGRID(N,R,W)
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: N
+      DOUBLE PRECISION, INTENT(  OUT) :: R(*), W(*)
+C
+      INTEGER                :: I, NMID
+      DOUBLE PRECISION       :: PI, FPI, XI, XI2, XI3, RI, RNP1I,
+     *                          RMIDI, RMID3I
+C
+C     Knowles grid (N must be odd.)
+C
+      PI = ACOS(-1.0D+00)
+      FPI= 4.0D+00*PI
+
+      RNP1I = 1.0D+00/REAL(N+1,8)
+      DO I=1,N
+        XI = REAL(I,8)*RNP1I
+        XI2= XI*XI
+        XI3= XI2*XI
+
+        RI =-LOG(1.0D+00-XI3)
+
+        R(I)=RI
+        W(I)=3.0D+00*XI2*RI*RI/(1.0D+00-XI3)*RNP1I
+      ENDDO
+
+      NMID  = (N-1)/2 + 1
+      RMIDI = 1.0D+00/R(NMID)
+      RMID3I= RMIDI*RMIDI*RMIDI*FPI
+C
+C
+C
+      DO I=1,N
+        R(I) = RMIDI*R(I)
+        W(I) = RMID3I*W(I)
+      ENDDO
+C
+      RETURN
+      END
+C*MODULE RSM_SDDUTL  *DECK RSM_PUNABSDMT
+C>
+C>    @brief   punch out the ABS and fitting coefficients
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_PUNABSDMT
+C
+      USE RISM_IO,  ONLY : IP
+      USE ABSMOD,   ONLY : EX0A,COF0A,KSTRT0A,KATM0A,KTYP0A,KNG0A,
+     *                     KLOC0A,KMIN0A,KMAX0A,NSHEL0A,NQMT0A,TQ,
+     *                     NRAD, FMAT
+      USE RSMSED,   ONLY : NAT, ANAM, ZAN, NPRINT, DMT
+      USE RISM_MOD, ONLY : MASWRK
+C
+      IMPLICIT NONE
+C
+      CHARACTER(LEN=2) :: LABEL(3)
+      DATA LABEL/'S ','P ','D '/
+C
+      DOUBLE PRECISION, ALLOCATABLE :: DMTA(:),DMTB(:),
+     *                                 ZMAT(:),RLN(:),WGHT(:)
+      INTEGER,ALLOCATABLE :: NS(:), KS(:)
+C
+      INTEGER             :: NPTMP, I001, I010, I100, I, J, II, IRAD,
+     *                       I1, I2, NS1, NS2, ITYP, IAT, ISH, IG
+      DOUBLE PRECISION    :: VAL, AI, COEF, EE, FACTS, FACTP, FACTD,
+     *                       PI, C1
+C
+      PI = ACOS(-1.0D+00)
+C
+      NPTMP = NPRINT
+      I001  = MOD(NPTMP,10)
+      NPTMP = NPTMP/10
+      I010   = MOD(NPTMP,10)
+      NPTMP = NPTMP/10
+      I100  = MOD(NPTMP,10)
+C
+      ALLOCATE(DMTA(NSHEL0A),DMTB(NQMT0A+1),NS(NAT),KS(NAT))
+      ALLOCATE(ZMAT(NQMT0A),RLN(NRAD),WGHT(NRAD))
+
+      CALL RSM_DARE(DMTB,NQMT0A+1,24,0)
+
+      DO I=1,NSHEL0A
+        VAL = 0.0D+00
+        DO J=1,NQMT0A
+          VAL = VAL + TQ(I,J)*DMTB(J)
+        ENDDO
+        DMTA(I) = VAL
+      ENDDO
+C
+C     ----- PRINT OUT THE BASIS FUNCTIONS USED -----
+C
+      IF(MASWRK .and. I001 == 1) THEN
+        WRITE (IP,'(A6)') ' $DMAT'
+C
+        NS = 0
+        DO IAT=1,NAT
+          DO II=1,NSHEL0A
+            IF(KATM0A(II) == IAT) NS(IAT) = NS(IAT) + 1
+          ENDDO
+        ENDDO
+
+        KS(1) = 1
+        DO IAT=2,NAT
+          KS(IAT) = KS(IAT-1) + NS(IAT-1)
+        ENDDO
+C
+        DO 1420 IAT = 1,NAT
+           WRITE (IP,9120) ANAM(IAT), ZAN(IAT), NS(IAT)
+           NS1 = KS(IAT)
+           NS2 = NS1+NS(IAT)-1
+
+           DO 1400 ISH = NS1,NS2
+              I1 = KSTRT0A(ISH)
+              I2 = I1+KNG0A(ISH)-1
+              ITYP = KTYP0A(ISH)
+C
+C       PRINT ALL GAUSSIAN EXPONENTS AND CONTRACTION COEFS IN THIS AO
+C
+              WRITE(IP,'(A2,I4,F18.9)') LABEL(ITYP),KNG0A(ISH),DMTA(ISH)
+              DO 1380 IG = I1,I2
+C
+C         -ITYP- IS AN INDEX INTO THE TABLE OF -LABEL- VALUES ABOVE.
+C         1-7=S,P,D,F,G,H,I AND 8=L ARE THE BASIC TYPES OF MOST SETS.
+C         9-27 ARE ARCHAIC UNDOCUMENTED STO SUBSHELLS STRINGS, WHICH
+C         CONSIST OF S,P,D,L AND UNIMPLEMENTED -M- SHELLS.
+C
+                 AI   = EX0A(IG)
+                 COEF = COF0A(IG)
+            
+                 EE    = AI+AI
+                 FACTS = (PI/EE)**0.75D+00
+                 GO TO (1280,1290,1300), ITYP
+C
+ 1280            CONTINUE
+                 C1=COEF*FACTS
+                 WRITE(IP,9140) AI,C1
+C
+                 GO TO 1380
+C
+ 1290            CONTINUE
+                 FACTP = SQRT(0.5000d0/EE)*FACTS
+                 C1=COEF*FACTP
+                 WRITE(IP,9140) AI,C1
+C
+                 GO TO 1380
+C
+ 1300            CONTINUE
+                 FACTD = SQRT(0.7500d0/(EE*EE))*FACTS
+                 C1=COEF*FACTD
+                 WRITE(IP,9140) AI,C1
+C
+                 GO TO 1380
+C
+ 1380         CONTINUE
+C              END LOOP OVER SHELLS FOR THIS ATOM
+ 1400      CONTINUE
+C              END LOOP OVER ATOMS
+ 1420   CONTINUE
+
+        WRITE(IP,'(A5)') ' $END'
+      ENDIF
+
+      CALL RSM_DARE(ZMAT,NQMT0A,45,0)
+      CALL RSM_FITGRID(NRAD,RLN,WGHT)
+
+      IF(MASWRK .and. I100 == 1) THEN
+        WRITE(IP,'(A7)') ' $DCOEF'
+        WRITE(IP,'(A32)') ' INDEX, DMAT(I), DMAT(I)*ZMAT(I)'
+        DO I=1,NQMT0A
+          WRITE(IP,'(1X,I6,2F12.6)') I, DMT(I), DMT(I)*ZMAT(I)
+        ENDDO
+        WRITE(IP,'(A5)') ' $END'
+
+        WRITE(IP,'(A6)') ' $FMAT'
+
+        DO IRAD=1,NRAD
+          WRITE(IP,'(200F10.5)') RLN(IRAD), (FMAT(II,IRAD),II=1,NQMT0A)
+        ENDDO
+
+        WRITE(IP,'(A5)') ' $END'
+      ENDIF
+
+      DEALLOCATE(DMTA,DMTB,NS,KS)
+      DEALLOCATE(ZMAT,RLN,WGHT)
+
+      RETURN
+ 9120 FORMAT(2X,A8,F5.1,I5)
+C        BRETT SAYS MACMOLPLT HAS 5 COLUMN ASSUMPTION BETWEEN
+C        SHELL COUNTER AND BASIS TYPE, HENCE 3X,A2 IS THE ONLY
+C        RIGIDLY UNCHANGEABLE PART OF THIS FORMAT STATEMENT:
+ 9140 FORMAT(9X,F15.7,2F18.12)
+      END
+
+C*MODULE RSM_SDDUTL  *DECK RSM_GMSRAD
+C>
+C>    @brief   prepare the BRAGG-SLATER radii, which is used 
+C>             in GAMESS
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NAT: the number of atoms
+C>             ZAN: atomic number
+C>             GMSRAD: the BRAGG-SLATER radii
+C>
+      SUBROUTINE RSM_GMSRAD(NAT,ZAN,GMSRAD)
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: NAT
+      DOUBLE PRECISION, INTENT(IN   ) :: ZAN(*) 
+      DOUBLE PRECISION, INTENT(  OUT) :: GMSRAD(*)   
+C
+      DOUBLE PRECISION, PARAMETER     :: BOHR = 0.52917715D+00
+      DOUBLE PRECISION                :: GMSBSLRD(118)
+
+      INTEGER                :: I
+C
+C     H - Ne
+      DATA GMSBSLRD/0.52917D+00, 0.31D+00,
+     *              1.45D+00, 1.05D+00, 0.85D+00, 0.70D+00, 0.65D+00, 
+     *              0.60D+00, 0.50D+00, 0.38D+00, 
+C     Na - Ar
+     *              1.80D+00, 1.50D+00, 1.25D+00, 1.10D+00, 1.00D+00, 
+     *              1.00D+00, 1.00D+00, 0.71D+00,
+C     K  - Kr
+     *              2.20D+00, 1.80D+00, 1.60D+00, 1.40D+00, 1.35D+00, 
+     *              1.40D+00, 1.40D+00, 1.40D+00, 1.35D+00, 1.35D+00, 
+     *              1.35D+00, 1.35D+00, 1.30D+00, 1.25D+00, 1.15D+00, 
+     *              1.15D+00, 1.15D+00, 0.88D+00,
+C     Rb - Xe
+     *              2.35D+00, 2.00D+00, 1.80D+00, 1.55D+00, 1.45D+00, 
+     *              1.45D+00, 1.35D+00, 1.30D+00, 1.35D+00, 1.40D+00, 
+     *              1.60D+00, 1.55D+00, 1.55D+00, 1.45D+00, 1.45D+00, 
+     *              1.40D+00, 1.40D+00, 1.08D+00,
+C     Cs - Rn
+     *              2.60D+00, 2.15D+00, 1.95D+00, 1.85D+00, 1.85D+00, 
+     *              1.85D+00, 1.85D+00, 1.85D+00, 1.85D+00, 1.80D+00, 
+     *              1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00, 
+     *              1.75D+00, 1.75D+00, 1.55D+00, 1.45D+00, 1.35D+00, 
+     *              1.35D+00, 1.30D+00, 1.35D+00, 1.35D+00, 1.35D+00, 
+     *              1.50D+00, 1.90D+00, 1.80D+00, 1.60D+00, 1.90D+00, 
+     *              1.27D+00, 1.20D+00,
+C     Fr - Og
+     *              2.60D+00, 2.15D+00, 1.95D+00, 1.80D+00, 1.75D+00, 
+     *              1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00,
+     *              1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00,
+     *              1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00,
+     *              1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00,
+     *              1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00, 1.75D+00,
+     *              1.75D+00, 1.75D+00/
+
+      DO I=1,NAT
+        GMSRAD(I) = GMSBSLRD(INT(ZAN(I)))/BOHR
+      ENDDO
+
+      END SUBROUTINE
+

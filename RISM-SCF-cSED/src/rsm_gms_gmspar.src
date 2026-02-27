@@ -1,0 +1,68 @@
+C*MODULE RSM_GMS_GMSPAR  *DECK RSM_PARIN
+C>
+C>    @brief   set parameters for parallel calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_PARIN
+
+      USE RISM_MOD, ONLY : GOPARR, MASWRK, NPROC, ME, MASTER, DSKWRK
+
+      IMPLICIT NONE
+
+      LOGICAL GOPARR_GMS,DSKWRK_GMS,MASWRK_GMS
+      INTEGER ME_GMS,MASTER_GMS,NPROC_GMS,IBTYP,IPTIM
+      COMMON /PAR   / ME_GMS,MASTER_GMS,NPROC_GMS,IBTYP,IPTIM,
+     *                GOPARR_GMS,DSKWRK_GMS,MASWRK_GMS
+
+      ME     = ME_GMS
+      MASTER = MASTER_GMS
+      NPROC  = NPROC_GMS
+
+      GOPARR = GOPARR_GMS
+      DSKWRK = DSKWRK_GMS
+      MASWRK = MASWRK_GMS
+
+      END SUBROUTINE
+C*MODULE RSM_GMS_GMSPAR  *DECK RSM_BCAST
+C>
+C>    @brief   broadcast the data
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MSGTAG: message tag 
+C>             TYPE: type of the data
+C>             BUFF: data
+C>             LEN: the size of data
+C>             FROM: rank of process that has the send buffer
+C>
+      SUBROUTINE RSM_BCAST(MSGTAG,TYPE,BUFF,LEN,FROM)
+      IMPLICIT NONE
+ 
+      INTEGER,     INTENT(IN   ) :: MSGTAG, BUFF(*), LEN, FROM
+      CHARACTER*1, INTENT(IN   ) :: TYPE
+ 
+      CALL DDI_BCAST( MSGTAG, TYPE, BUFF, LEN, FROM )
+ 
+      END SUBROUTINE
+ 
+C*MODULE RSM_GMS_GMSPAR  *DECK RSM_GSUMF
+C>
+C>    @brief   take global sums
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MSGTAG: message tag
+C>             BUFF: data
+C>             MSGLEN: length of message
+C>
+ 
+      SUBROUTINE RSM_GSUMF(MSGTAG,BUFF,MSGLEN)
+      IMPLICIT NONE
+ 
+      INTEGER,          INTENT(IN   ) :: MSGTAG, MSGLEN
+      DOUBLE PRECISION, INTENT(INOUT) :: BUFF(*)
+ 
+      CALL DDI_GSUMF(MSGTAG,BUFF,MSGLEN)
+  
+      END SUBROUTINE

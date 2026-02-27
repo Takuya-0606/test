@@ -1,0 +1,2656 @@
+C*MODULE RSM_CPRSM  *DECK RSM_CPHF_DRV1
+C>
+C>    @brief   compute tQ * v * Q * (trial vector) in atomic orbital
+C>             (see: the last term in eq 20 in JCP, 155, 204102 (2021))
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITYP: JOB type
+C>             DAO: Density matrix in atomic orbital (input)
+C>             RSMAO: tQ * v * Q * (trial vector) (output)
+C>             BFCT: scaling factor defined in subroutine RSM_CPHF_4
+C>
+      SUBROUTINE RSM_CPHF_DRV1(ITYP,DAO,RSMAO,BFCT)
+
+      USE RISM_IO,  ONLY : IRSSQF
+      USE ABSMOD,   ONLY : NQMT0A
+      USE RSMSED,   ONLY : NUM, QMT, DMT, VPR, NAT
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: ITYP
+      DOUBLE PRECISION, INTENT(IN   ) :: DAO(*), BFCT
+      DOUBLE PRECISION, INTENT(  OUT) :: RSMAO(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: Y(:),V1A(:,:),V2(:,:),
+     *                                    WRK(:),V1B(:,:)
+      INTEGER, ALLOCATABLE            :: NIJ(:)
+
+      INTEGER                         :: L1, L2, I, J, IJ
+      DOUBLE PRECISION                :: VAL
+C
+C     
+C
+      L1 = NUM
+      L2 = L1*(L1+1)/2
+C
+      ALLOCATE(Y(NQMT0A+1),V1A(NQMT0A,NQMT0A),V2(NQMT0A,3*NAT),
+     *         NIJ(NUM*NUM),WRK(NQMT0A+1),V1B(NQMT0A,NQMT0A))
+
+      IF(ITYP == 0) THEN
+        V1A = 0.0D+00
+        V1B = 0.0D+00
+
+        CALL RSM_CPRISM1(V1A)
+        CALL RSM_CPRISM2(V2)
+        CALL RSM_V1CORR(QMT,VPR,DMT,V1B)
+      ELSE
+        CALL RSM_DARE(V1A,NQMT0A*NQMT0A,60,0)
+        CALL RSM_DARE(V1B,NQMT0A*NQMT0A,65,0)
+      ENDIF 
+
+      CALL RSM_CALY1(IRSSQF,NUM,NQMT0A,NIJ,DAO,Y(1))
+      CALL RSM_CALY2(NUM,DAO,Y(NQMT0A+1))
+
+      IJ = 0
+      DO I=1,NQMT0A+1
+        VAL = 0.0D+00
+        DO J=1,NQMT0A+1
+          IJ = IJ + 1
+
+          VAL = VAL + QMT(IJ)*Y(J)
+        ENDDO
+        WRK(I) = VAL
+      ENDDO
+
+      Y = 0.0D+00
+      DO I=1,NQMT0A
+        VAL = 0.0D+00
+        DO J=1,NQMT0A
+          VAL = VAL + (V1A(J,I)+BFCT*V1B(J,I))*WRK(J)
+        ENDDO
+        Y(I) = VAL
+      ENDDO
+
+      IJ = 0
+      DO I=1,NQMT0A+1
+        VAL = 0.0D+00
+        DO J=1,NQMT0A+1
+          IJ = IJ + 1
+
+          VAL = VAL + QMT(IJ)*Y(J)
+        ENDDO
+        WRK(I) = VAL
+      ENDDO
+
+      CALL VCLR(RSMAO,1,L2)
+      CALL RSM_CALY3(IRSSQF,NUM,NQMT0A,NIJ,RSMAO,WRK)
+      CALL RSM_CALY4(NUM,RSMAO,WRK(NQMT0A+1))
+
+      IF(ITYP == 0) THEN
+        CALL RSM_DAWR(V1A,NQMT0A*NQMT0A,60,0)
+        CALL RSM_DAWR(V2, NQMT0A*3*NAT ,61,0)
+        CALL RSM_DAWR(V1B,NQMT0A*NQMT0A,65,0)
+      ENDIF
+C
+      DEALLOCATE(Y,V1A,V2,NIJ,WRK,V1B)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CPHF_DRV2
+C>
+C>    @brief   compute the gradients in MP2 coupled with RISM-SCF-cSED
+C>             (see: the 2nd and 3rd lines in JCP, 154, 154101 (2021))
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   PHF: Hartree Fock density (input)
+C>             DAO: Density matrix P[2] in atomic orbital (input)
+C>
+      SUBROUTINE RSM_CPHF_DRV2(PHF,DAO)
+
+      USE RISM_IO,  ONLY : IRSSQF
+      USE ABSMOD,   ONLY : NQMT0A
+      USE RSMSED,   ONLY : NUM, QMT, DMT, VPR, NAT
+
+      IMPLICIT NONE
+
+      DOUBLE PRECISION, INTENT(IN   ) :: PHF(*), DAO(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: Y(:),V1(:,:),V2(:,:),
+     *                                   WRK(:),DER(:)
+      INTEGER, ALLOCATABLE            :: NIJ(:)
+C
+      INTEGER                         :: L1, L2, I, J, IJ
+      DOUBLE PRECISION                :: VAL
+C
+      L1 = NUM
+      L2 = L1*(L1+1)/2
+C
+      ALLOCATE(Y(NQMT0A+1),V1(NQMT0A,NQMT0A),V2(NQMT0A,3*NAT),
+     *         NIJ(NUM*NUM),WRK(NQMT0A+1),DER(3*NAT))
+C
+      DER = 0.0D+00
+C
+      CALL RSM_DARE(V1,NQMT0A*NQMT0A,60,0)
+      CALL RSM_DARE(V2,NQMT0A*3*NAT ,61,0)
+
+      CALL RSM_CALY1(IRSSQF,NUM,NQMT0A,NIJ,DAO,Y(1))
+      CALL RSM_CALY2(NUM,DAO,Y(NQMT0A+1))
+C
+      IJ = 0
+      DO I=1,NQMT0A+1
+        VAL = 0.0D+00
+        DO J=1,NQMT0A+1
+          IJ = IJ + 1
+
+          VAL = VAL + QMT(IJ)*Y(J)
+        ENDDO
+        WRK(I) = VAL
+      ENDDO
+C
+C     TERM [2]
+C
+      Y = 0.0D+00
+      DO I=1,NQMT0A
+        VAL = 0.0D+00
+        DO J=1,NQMT0A
+          VAL = VAL + WRK(J)*V1(J,I)
+        ENDDO
+        Y(I) = VAL
+      ENDDO
+
+      CALL RSM_GRD(1,Y,PHF,DER)
+C
+C     TERM [1]
+C
+      DO I=1,3*NAT
+        VAL = 0.0D+00
+        DO J=1,NQMT0A
+          VAL = VAL + WRK(J)*V2(J,I)
+        ENDDO
+        DER(I) = DER(I) + VAL
+      ENDDO
+C
+      CALL RSM_DAWR(DER,3*NAT,62,0)
+C
+
+      DEALLOCATE(Y,V1,V2,NIJ,WRK,DER)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CPHF_DRV3
+C>
+C>    @brief   compute the gradients in MP2 coupled with RISM-SCF-cSED
+C>             (see: the 2nd and 3rd lines in JCP, 154, 154101 (2021))
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   DAO: Density matrix P[2] in atomic orbital (input)
+C>             FD2: contribution of solvation effect to WAX
+C>
+
+      SUBROUTINE RSM_CPHF_DRV3(DAO,FD2)
+
+      USE RISM_IO,  ONLY : IRSSQF
+      USE ABSMOD,   ONLY : NQMT0A
+      USE RSMSED,   ONLY : NUM, QMT, DMT, VPR, NAT
+      USE RISM_MOD, ONLY : CSB, FQLK
+
+      IMPLICIT NONE
+
+      DOUBLE PRECISION, INTENT(INOUT) :: DAO(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: FD2(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: V1A(:,:),V2(:,:),WRK1(:),
+     *                                   WRK2(:),WRK3(:),EG(:),EH(:),
+     *                                   VQ(:), FD1(:,:), V1B(:,:),
+     *                                   GD1(:,:), GD2(:), DDA(:,:),
+     *                                   FCM(:)
+      INTEGER,ALLOCATABLE             :: NIJ(:)
+C
+      INTEGER               :: L1, L2, L1MAX, I, J, NN, NLAST, MM, K
+      DOUBLE PRECISION      :: VAL
+C
+C     check
+C
+      INTEGER, PARAMETER              :: IFREEZ = 0 !0: RELAX, 1: FROZEN
+C
+      L1 = NUM
+      L2 = L1*(L1+1)/2
+      L1MAX = MAX(NUM,NQMT0A+1)
+C
+      ALLOCATE(V1A(NQMT0A,NQMT0A),V2(NQMT0A,3*NAT),
+     *         NIJ(NUM*NUM),WRK1(L1MAX),WRK2(L2),VQ(NQMT0A+1),
+     *         WRK3(L1MAX),V1B(NQMT0A,NQMT0A))
+      ALLOCATE(FD1(NQMT0A,3*NAT),EG(3*NAT),
+     *         EH(9*NAT*(NAT+1)/2),GD1(NQMT0A,3*NAT),
+     *         GD2(3*NAT),DDA(NQMT0A+1,3*NAT),FCM(9*NAT*NAT)) 
+C
+C
+C
+      CALL VCLR(EG ,1,3*NAT   )
+      CALL VCLR(EH ,1,9*NAT*(NAT+1)/2)
+C
+      CALL RSM_CLDMT2(DAO,DMT)
+C
+C     PREPARE V1A & V1B & V2
+C
+      V1A = 0.0D+00
+      V1B = 0.0D+00
+      V2  = 0.0D+00
+
+      IF(IFREEZ == 0) THEN
+        CALL RSM_CPRISM1(V1A)
+        CALL RSM_CPRISM3(V2,EH)
+      ELSE
+        WRITE(*,*) 'Warning !: IFREEZ = 1!'
+      ENDIF
+      CALL RSM_V1CORR(QMT,VPR,DMT,V1B)
+C
+C     GET DD
+C
+      CALL VCLR(FD1,1,3*NAT*NQMT0A)
+      CALL VCLR(FD2,1,3*NAT*L2)
+      CALL VCLR(GD1,1,3*NAT*NQMT0A)
+      CALL VCLR(GD2,1,3*NAT)
+C
+C     ADD OMG CONTRIBUTION TO EG
+C
+      CALL RSM_OMGINV(EG,CSB,FQLK)
+C
+C     PREPARE VQ
+C
+      NN = 0
+      DO I=1,NQMT0A+1
+        VAL = 0.0D+00
+        DO J=1,NQMT0A
+          NN = NN + 1
+          VAL = VAL + QMT(NN)*VPR(J)
+        ENDDO
+        NN = NN + 1
+
+        VQ(I) = VAL
+      ENDDO
+C
+      NLAST = NQMT0A+1
+C
+C     
+C
+      CALL RSM_MKDXMT1CP(VQ,DMT       ,FD1,GD1,EG,EH)
+      CALL RSM_MKDXMT2CP(VQ,DMT,                  EH)
+      CALL RSM_MKDYMT1CP(VQ       ,DAO,FD2,GD1,EG,EH)
+      CALL RSM_MKDYMT2CP(VQ,       DAO,FD2,GD1,EG,EH)
+      CALL RSM_MKDYMT3CP(VQ,       DAO,           EH)
+      CALL RSM_MKDSMTCP (VQ(NLAST),DAO,FD2,GD2,EG,EH)
+C
+C     PREAPRE dD(a)
+C
+      DO I=1,3*NAT
+        NN = 0
+        DO J=1,NQMT0A+1
+          VAL = 0.0D+00
+          DO K=1,NQMT0A
+            NN = NN + 1
+            VAL = VAL + QMT(NN)*GD1(K,I)
+          ENDDO
+          NN = NN + 1
+          VAL = VAL + QMT(NN)*GD2(I)
+        
+          DDA(J,I) = VAL
+        ENDDO
+      ENDDO
+C
+C     MODIFY EH
+C
+      CALL RSM_EHMOD_CPHF(NAT,NQMT0A,V1A,V1B,V2,FD1,DDA,EH)
+C
+C     COMPLETE FD2 FOR SOLVATED FOCK
+C 
+C     SAVE V1A & V1B
+C
+      CALL RSM_DAWR(V1A,NQMT0A*NQMT0A,60,0)
+      CALL RSM_DAWR(V2, NQMT0A*3*NAT ,61,0)
+      CALL RSM_DAWR(V1B,NQMT0A*NQMT0A,65,0)
+C
+C     COMPLETE FD2 
+C
+      MM = 0
+      DO K=1,3*NAT
+        DO I=1,NQMT0A
+          VAL = 0.0D+00
+          DO J=1,NQMT0A
+            VAL = VAL + (V1A(J,I)+V1B(J,I))*DDA(J,K)
+          ENDDO
+          WRK1(I) = - FD1(I,K) + VAL + V2(I,K) 
+        ENDDO
+
+        NN = 0
+        DO I=1,NQMT0A+1
+          VAL = 0.0D+00
+          DO J=1,NQMT0A
+            NN = NN + 1
+            VAL = VAL + QMT(NN)*WRK1(J)
+          ENDDO
+          NN = NN + 1
+
+          WRK3(I) = VAL
+        ENDDO
+
+        CALL VCLR(WRK2,1,L2)
+        CALL RSM_CALY3(IRSSQF,NUM,NQMT0A,NIJ,WRK2,WRK3)
+        CALL RSM_CALY4(NUM,WRK2,WRK3(NQMT0A+1))
+
+        DO I=1,L2
+          FD2(MM+I) = FD2(MM+I) + WRK2(I)
+        ENDDO
+        MM = MM + L2
+      ENDDO
+C
+C     EH -> FCM
+C
+      CALL CPWAB0(FCM,EH,NAT)
+C
+C     SAVE EG & EH
+C
+      CALL RSM_DAWR(EG ,3*NAT    ,62,0)
+      CALL RSM_DAWR(FCM,9*NAT*NAT,64,0)
+
+
+      DEALLOCATE(V1A,V1B,V2,NIJ,WRK1,WRK2,VQ,WRK3,FD1,EG,EH,GD1,GD2,DDA,
+     *           FCM)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CPRISM1
+C>
+C>    @brief   perform CP-RISM calculation with respect to the change 
+C>             of d coefficient
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   V1: partial derivative of V with respect to d coefficient
+C>             (see: the first term in eq 17 in JCP, 155, 204102 (2021))
+C>
+      SUBROUTINE RSM_CPRISM1(V1)
+
+      USE RISM_IO,  ONLY : IW
+      USE ABSMOD,   ONLY : NQMT0A, NSHEL0A, KATM_QMT0A, TQ
+      USE RISM_MOD, ONLY : IGRD_TYP, NU, NV, NTAB, RTAB, RKTAB, CLTYP,
+     *                     ALPA, BETA, QV, INDU, INDV, 
+     *                     ET0, FQS, FNEP, WU, HWV, HREF, DENV, MXDIIS,
+     *                     MASWRK, GOPARR, MASTER, RSM_ISTIEND
+      USE FFT_MOD,  ONLY : RSM_INITIAL_UN, RSM_INITIAL_LN,
+     *                     RSM_CLOSEFFT_UN, RSM_CLOSEFFT_LN, 
+     *                     RSM_FFT1D_UN, RSM_FFT1D_LN0
+
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(  OUT) :: V1(NQMT0A,*)
+C
+      DOUBLE PRECISION, PARAMETER     :: ONESIX=0.1666666666666666666666
+     *                                            66666667D+00
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: VDUM(:,:,:),H0(:,:,:),
+     *                                   DFQS(:,:,:),DFQLK(:,:,:),
+     *                                   DC(:,:,:),DE(:,:,:),DEN(:,:,:),
+     *                                   WRK(:,:,:),FFT(:),XOPT(:),
+     *                                   WSYM(:,:)
+C
+      LOGICAL               :: GOPAR2
+      INTEGER, SAVE         :: ITER_CP = 0
+      INTEGER               :: MAXIT, NTOT, NDIM, L16, ISTRT, IEND,
+     *                         NTOT_PARR, NREQ1, 
+     *                         LFO, LQO, LU, LDF, LA, LW, I, J, K,
+     *                         L, II, JJ, ITER, IU, IV, IATM, IATM0, 
+     *                         JATM, NM
+      DOUBLE PRECISION      :: PI, FPI, FALPA2, THR3, SUM, SUM2, G0,
+     *                         XMN, ALPHA, RRR, RKK, RK2, TQFCT, TQFCT0,
+     *                         FCT0, FCT1, DIFFI, R2, ABRYD, DFQL, WWW
+C
+      DOUBLE PRECISION      :: RSM_EXPDMP
+C
+      DOUBLE PRECISION      :: CL_HNC, CL_KH, CL_PSE2, CL_PSE3
+      DATA CL_HNC,CL_KH,CL_PSE2,CL_PSE3/8HHNC     ,8HKH      ,
+     *                                  8HPSE2    ,8HPSE3    /
+C
+      PI=ACOS(-1.0D+00)
+      FPI=4.0D+00*PI
+      FALPA2=4.0D+00*ALPA*ALPA
+!     THR3 = 5.0D-12
+      THR3 = 2.0D-11
+!     MAXIT= 500
+      MAXIT= 300
+
+      NTOT = NU*NV
+      NDIM = NTAB*NTOT
+
+      L16 = NTAB*NV*NQMT0A
+C
+      CALL RSM_ISTIEND(NQMT0A,ISTRT,IEND,NTOT_PARR)
+C
+      NREQ1 = NDIM + NDIM + NDIM*MXDIIS + NDIM*MXDIIS + MXDIIS
+     *        + MXDIIS*MXDIIS
+
+      LFO  = 1                  !
+      LQO  = LFO  + NDIM        !
+      LU   = LQO  + NDIM
+      LDF  = LU   + NDIM*MXDIIS
+      LA   = LDF  + NDIM*MXDIIS
+      LW   = LA   + MXDIIS*MXDIIS
+C
+C     ALLOCATE
+C
+      ALLOCATE(VDUM(NTAB,NV,NQMT0A),H0(NTAB,NU,NV),DFQS(NTAB,NU,NV),
+     *         DFQLK(NTAB,NU,NV),DC(NTAB,NU,NV),DE(NTAB,NU,NV),
+     *         DEN(NTAB,NU,NV),WRK(NTAB,NU,NV),FFT(NTAB),XOPT(NREQ1),
+     *         WSYM(NQMT0A,NQMT0A))
+C
+C     RISM CALCULATION
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_INITIAL_UN
+      ELSE
+        CALL RSM_INITIAL_LN(0)
+      ENDIF
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+C
+C     ----- CP-RISM CALCULATION -----
+C
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+C
+C     PREPARE H0
+C
+      CALL RSM_DARE(FNEP ,NDIM, 12,0)
+      CALL RSM_DARE(FQS  ,NDIM, 19,0)
+      CALL RSM_DARE(ET0  ,NDIM, 16,0)
+      CALL RSM_DARE(VDUM ,L16 , 96,0)
+C
+      IF(CLTYP.EQ.CL_HNC) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+            
+            H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+          ENDDO
+        ENDDO
+      ELSEIF(CLTYP.EQ.CL_KH) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+
+            IF(SUM <= 0.0D+00) THEN
+              H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+            ELSE
+              H0(K,IU,IV)=G0*SUM 
+            ENDIF
+          ENDDO
+        ENDDO
+      ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+
+            IF(SUM <= 0.0D+00) THEN
+              H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+            ELSE
+              SUM2 = SUM*SUM
+
+              H0(K,IU,IV)=G0*(SUM + 0.5D+00*SUM2)
+            ENDIF
+          ENDDO
+        ENDDO
+      ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+
+            IF(SUM <= 0.0D+00) THEN
+              H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+            ELSE
+              SUM2 = SUM*SUM
+
+              H0(K,IU,IV)=G0*(SUM + 0.5D+00*SUM2 + ONESIX*SUM2*SUM)
+            ENDIF
+          ENDDO
+        ENDDO
+      ENDIF
+C
+C     GET V1
+C
+      IATM0 = KATM_QMT0A(ISTRT) - 1
+
+      WSYM = 0.0D+00
+      DO II=ISTRT,IEND
+        IATM = KATM_QMT0A(II)
+C
+        TQFCT = 0.0D+00
+        DO JJ=1,NSHEL0A
+          TQFCT = TQFCT + TQ(JJ,II)
+        ENDDO
+C
+C       IMITIALIZATION
+C
+        NM   = 0
+        DC   = 0.0D+00
+        DFQS = 0.0D+00
+        DFQLK= 0.0D+00
+C
+C       PREPARE DFQS, DFQLK
+C
+        DO IV=1,NV
+          FCT1 = BETA*QV(IV)*TQFCT
+          DO IU=1,NU
+            IF(IATM == IU) THEN
+              DO K=2,NTAB
+                RRR=RTAB(K)
+                RKK=RKTAB(K)
+                RK2=RKK*RKK
+
+                DFQL          =FCT1*ERF(ALPA*RRR)/RRR
+                DFQS (K,IU,IV)=BETA*VDUM(K,IV,II)-DFQL
+                DFQLK(K,IU,IV)=FPI*FCT1/RK2*EXP(-RK2/FALPA2)
+              ENDDO
+              IF(RTAB(1) < 1.0D-10) THEN
+                DFQL          =FCT1*2.0D+00*ALPA/SQRT(PI)
+                DFQS (1,IU,IV)=BETA*VDUM(1,IV,II)-DFQL
+                DFQLK(1,IU,IV)=DFQLK(2,IU,IV)
+              ELSE
+                RRR=RTAB(1)
+                RKK=RKTAB(1)
+                RK2=RKK*RKK
+
+                DFQL          =FCT1*ERF(ALPA*RRR)/RRR
+                DFQS (1,IU,IV)=BETA*VDUM(1,IV,II)-DFQL
+                DFQLK(1,IU,IV)=FPI*FCT1/RK2*EXP(-RK2/FALPA2)
+              ENDIF
+
+              IF(CLTYP.EQ.CL_HNC) THEN
+                DO K=1,NTAB
+                  DFQS(K,IU,IV)=DFQS(K,IU,IV)*(H0(K,IU,IV)+1.0D+00)
+                ENDDO
+              ELSEIF(CLTYP.EQ.CL_KH) THEN
+                DO K=1,NTAB
+                  IF(H0(K,IU,IV) <= 0.0D+00) THEN
+                    DFQS(K,IU,IV)=DFQS(K,IU,IV)*(H0(K,IU,IV)+1.0D+00)
+                  ENDIF
+                ENDDO
+              ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+                DO K=1,NTAB
+                  SUM= FNEP(K,NU*(IV-1)+IU)
+     *               + FQS (K,NU*(IV-1)+IU)
+     *               + ET0 (K,NU*(IV-1)+IU)
+
+                  IF(SUM <= 0.0D+00) THEN
+                    DFQS(K,IU,IV)=DFQS(K,IU,IV)*(H0(K,IU,IV)+1.0D+00)
+                  ELSE
+                    DFQS(K,IU,IV)=DFQS(K,IU,IV)*(1.0D+00+SUM)
+                  ENDIF
+                ENDDO
+              ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+                DO K=1,NTAB
+                  SUM= FNEP(K,NU*(IV-1)+IU)
+     *               + FQS (K,NU*(IV-1)+IU)
+     *               + ET0 (K,NU*(IV-1)+IU)
+
+                  IF(SUM <= 0.0D+00) THEN
+                    DFQS(K,IU,IV)=DFQS(K,IU,IV)*(H0(K,IU,IV)+1.0D+00)
+                  ELSE
+                    SUM2 = SUM*SUM
+
+                    DFQS(K,IU,IV)=DFQS(K,IU,IV)
+     *                           *(1.0D+00+SUM+0.5D+00*SUM2)
+                  ENDIF
+                ENDDO
+              ENDIF
+            ENDIF
+          ENDDO
+        ENDDO
+C
+C       START ITERATION
+C
+        IF(IATM /= IATM0) THEN
+          IATM0 = IATM
+          DE    = 0.0D+00
+        ELSE
+          IF(ABS(TQFCT0) > 1.0D-10) THEN
+            FCT0 = TQFCT/TQFCT0
+
+            IF(ABS(FCT0) > 10.0D+00) THEN
+              DE = 0.0D+00
+            ELSE
+              DO I=1,NV
+                DO J=1,NU
+                  DO K=1,NTAB
+                    DE(K,J,I) = DE(K,J,I)*FCT0
+                  ENDDO
+                ENDDO
+              ENDDO
+            ENDIF
+          ENDIF 
+
+!         CALL RSM_DARE(DE,NDIM,63,0)
+        ENDIF
+        TQFCT0 = TQFCT
+
+        DO ITER=0,1000000
+C
+C       PREPARE DC
+C        
+          IF(CLTYP.EQ.CL_HNC) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  DC(K,J,I) = DFQS(K,J,I)+H0(K,J,I)*DE(K,J,I)
+                ENDDO
+              ENDDO
+            ENDDO
+          ELSEIF(CLTYP.EQ.CL_KH) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  IF(H0(K,J,I) <= 0.0D+00) THEN
+                    DC(K,J,I) = DFQS(K,J,I)+H0(K,J,I)*DE(K,J,I)
+                  ELSE
+                    DC(K,J,I) = DFQS(K,J,I)
+                  ENDIF
+                ENDDO
+              ENDDO
+            ENDDO
+          ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  SUM= FNEP(K,NU*(I-1)+J)
+     *               + FQS (K,NU*(I-1)+J)
+     *               + ET0 (K,NU*(I-1)+J)
+
+                  IF(SUM < 0.0D+00) THEN
+                    DC(K,J,I) = DFQS(K,J,I)+H0(K,J,I)*DE(K,J,I)
+                  ELSE
+                    DC(K,J,I) = DFQS(K,J,I)+ DE(K,J,I)*SUM
+                  ENDIF
+                ENDDO
+              ENDDO
+            ENDDO
+          ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  SUM= FNEP(K,NU*(I-1)+J)
+     *               + FQS (K,NU*(I-1)+J)
+     *               + ET0 (K,NU*(I-1)+J)
+
+                  IF(SUM < 0.0D+00) THEN
+                    DC(K,J,I) = DFQS(K,J,I)+H0(K,J,I)*DE(K,J,I)
+                  ELSE
+                    SUM2 = SUM*SUM
+
+                    DC(K,J,I) = DFQS(K,J,I)+ DE(K,J,I)
+     *                        *(SUM+0.5D+00*SUM2)
+                  ENDIF
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDIF
+C
+C       FORWARD FFT
+C
+          IF(IGRD_TYP == 0) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DC(K,J,I)*RTAB(K)
+                ENDDO
+
+                CALL RSM_FFT1D_UN(1,FFT)
+
+                DO K=2,NTAB
+                  DC(K,J,I)=FFT(K)/RKTAB(K)
+                ENDDO
+                DC(1,J,I)=DC(2,J,I)
+              ENDDO
+            ENDDO
+          ELSE
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DC(K,J,I)
+                ENDDO
+                FFT(NTAB)=0.0D+00
+
+                CALL RSM_FFT1D_LN0(1,FFT)
+
+                DO K=1,NTAB
+                  DC(K,J,I)=FFT(K)
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDIF
+C
+C       GET DE
+C
+          DO I=1,NV
+            DO J=1,NU
+              FFT = 0.0D+00
+              DO L=1,NU
+                DO K=1,NTAB
+                  FFT(K) = FFT(K) + WU(K,L,J)*(DC(K,L,I)+DFQLK(K,L,I))
+                ENDDO
+              ENDDO
+              DO K=1,NTAB
+                WRK(K,J,I) = FFT(K)
+              ENDDO
+            ENDDO
+          ENDDO
+
+          DO I=1,NV
+            DO J=1,NU
+              FFT = 0.0D+00
+              DO L=1,NV
+                DO K=1,NTAB
+                  FFT(K) = FFT(K) + WRK(K,J,L)*HWV(K,L,I)
+                ENDDO
+              ENDDO
+    
+              DO K=1,NTAB
+                DEN(K,J,I) = FFT(K) - DC(K,J,I)
+              ENDDO
+            ENDDO
+          ENDDO
+C
+C       BACKWARD FFT 
+C
+          IF(IGRD_TYP == 0) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DEN(K,J,I)*RKTAB(K)
+                ENDDO
+
+                CALL RSM_FFT1D_UN(2,FFT)
+
+                DO K=2,NTAB
+                  DEN(K,J,I)=FFT(K)/RTAB(K)
+                ENDDO
+                DEN(1,J,I)=DEN(2,J,I)
+              ENDDO
+            ENDDO
+          ELSE
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DEN(K,J,I)
+                ENDDO
+                FFT(NTAB)=0.0D+00
+
+                CALL RSM_FFT1D_LN0(2,FFT)
+
+                DO K=1,NTAB
+                  DEN(K,J,I)=FFT(K)
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDIF
+C
+C     ----- Check the Convergence for the Inner Loop -----
+C
+          DIFFI=0.0D+00
+          DO I=1,NV
+            DO J=1,NU
+              DO K=1,NTAB
+                DIFFI=DIFFI+(DEN(K,J,I)-DE(K,J,I))**2
+              ENDDO
+            ENDDO
+          ENDDO
+          DIFFI=SQRT(DIFFI/FLOAT(NU*NV))
+
+          IF(DIFFI.LT.THR3.and.ITER.GT.MAXIT) EXIT
+          IF(DIFFI.LT.THR3.and.ITER.EQ.    0) EXIT
+C
+C        Print out
+C
+          IF(MOD(ITER,200).EQ.0 .and. MASWRK) THEN
+             WRITE(IW,'(10X,2I5,F20.15)')ITER,II,DIFFI
+          ENDIF
+C
+C     ----- Update the Functions -----
+C
+          ABRYD = 0.2D+00
+          GOPAR2= .FALSE.
+
+          NM    = NM + 1
+          ALPHA = 0.2D+00
+!         XMN   = 0.1D+00
+          XMN   = 0.2D+00
+
+          CALL RSM_XMBRYD2(GOPAR2,NM,NDIM,MXDIIS,DEN,DE,
+     *                  XOPT(LFO),XOPT(LQO),XOPT(LU),XOPT(LDF),
+     *                  XOPT(LW),XOPT(LA),ALPHA,XMN)
+        ENDDO
+C
+C     STORE DH/DD IN DEN
+C
+        IF(CLTYP.EQ.CL_HNC) THEN
+          DO I=1,NV
+            DO J=1,NU
+              DO K=1,NTAB
+                DEN(K,J,I) = DFQS(K,J,I)+(H0(K,J,I)+1.0D+00)*DE(K,J,I)
+              ENDDO
+            ENDDO
+          ENDDO
+        ELSEIF(CLTYP.EQ.CL_KH) THEN
+          DO I=1,NV
+            DO J=1,NU
+              DO K=1,NTAB
+                IF(H0(K,J,I) <= 0.0d0) THEN
+                  DEN(K,J,I) = DFQS(K,J,I)+(H0(K,J,I)+1.0D+00)*DE(K,J,I)
+                ELSE
+                  DEN(K,J,I) = DFQS(K,J,I) + DE(K,J,I)
+                ENDIF
+              ENDDO
+            ENDDO
+          ENDDO
+        ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+          DO I=1,NV
+            DO J=1,NU
+              DO K=1,NTAB
+                SUM= FNEP(K,NU*(I-1)+J)
+     *             + FQS (K,NU*(I-1)+J)
+     *             + ET0 (K,NU*(I-1)+J)
+                IF(SUM <= 0.0D+00) THEN
+                  DEN(K,J,I) = DFQS(K,J,I)+(H0(K,J,I)+1.0D+00)*DE(K,J,I)
+                ELSE
+                  DEN(K,J,I) = DFQS(K,J,I) + (1.0D+00+SUM)*DE(K,J,I)
+                ENDIF
+              ENDDO
+            ENDDO
+          ENDDO
+        ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+          DO I=1,NV
+            DO J=1,NU
+              DO K=1,NTAB
+                SUM= FNEP(K,NU*(I-1)+J)
+     *             + FQS (K,NU*(I-1)+J)
+     *             + ET0 (K,NU*(I-1)+J)
+                IF(SUM <= 0.0D+00) THEN
+                  DEN(K,J,I) = DFQS(K,J,I)+(H0(K,J,I)+1.0D+00)*DE(K,J,I)
+                ELSE
+                  SUM2 = SUM * SUM
+
+                  DEN(K,J,I) = DFQS(K,J,I)
+     *                       +(1.0D+00+SUM+0.5D+00*SUM2)*DE(K,J,I)
+                ENDIF
+              ENDDO
+            ENDDO
+          ENDDO
+
+        ENDIF
+C
+C
+C
+        DO JJ=1,NQMT0A
+          JATM = KATM_QMT0A(JJ)
+
+          FFT = 0.0D+00
+          DO I=1,NV
+            DO K=1,NTAB
+              R2     = RTAB(K)*RTAB(K)
+              FFT(K) = FFT(K) + R2*DENV(I)*DEN(K,JATM,I)*VDUM(K,I,JJ)
+            ENDDO
+          ENDDO
+  
+          CALL RSM_TRPLN(NTAB,RTAB,FFT,WWW)
+
+          WSYM(JJ,II) = - FPI*WWW
+        ENDDO
+      ENDDO
+C
+      IF(GOPARR) CALL RSM_GSUMF(10000,WSYM,NQMT0A*NQMT0A)
+C
+C     SYMMETRIZE
+C
+      DO I=1,NQMT0A
+        DO J=1,NQMT0A
+          V1(J,I) = 0.5D+00*(WSYM(J,I)+WSYM(I,J))
+        ENDDO
+      ENDDO
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_CLOSEFFT_UN
+      ELSE
+        CALL RSM_CLOSEFFT_LN
+      ENDIF
+C
+C     SAVE DE
+C
+      CALL RSM_DAWR(DE,NDIM,63,0)
+C
+C
+C
+      ITER_CP = ITER_CP + 1
+C
+      DEALLOCATE(VDUM,H0,DFQS,DFQLK,DC,DE,DEN,WRK,FFT,XOPT,WSYM)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CALY1
+C>
+C>    @brief   take the trace of density matrix times matrix Y 
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IRSSQF: file number of scratch file
+C>             NUM: the number of cartesian gaussian basis functions
+C>             NQMT0A: the number of auxiriary basis set
+C>             IC: scratch matrix
+C>             PA: density matrix in atomic orbital
+C>             YMAT: tr(D*Y), where D is the denisty matrix
+C>
+      SUBROUTINE RSM_CALY1(IRSSQF,NUM,NQMT0A,IC,PA,YMAT)
+C
+      USE RISM_MOD, ONLY : MASWRK, GOPARR, MASTER
+C
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: IRSSQF, NUM, NQMT0A
+      INTEGER,          INTENT(  OUT) :: IC(NUM,*)
+      DOUBLE PRECISION, INTENT(IN   ) :: PA(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: YMAT(NQMT0A)
+C
+      INTEGER                         :: I, J, K, IJ
+      DOUBLE PRECISION                :: VAL, SUMVAL
+C
+      IJ = 0
+      DO I=1,NUM
+        DO J=1,I
+          IJ = IJ + 1
+
+          IC(I,J) = IJ
+          IC(J,I) = IJ
+        ENDDO
+      ENDDO
+
+      YMAT = 0.0D+00
+      CALL SEQREW(IRSSQF)
+      IF(MASWRK) THEN
+   10   CONTINUE
+          READ(IRSSQF,END=20) I,J,K,VAL
+          IJ=IC(I,J)
+          SUMVAL=PA(IJ)*VAL
+
+          IF (J.NE.I) SUMVAL=SUMVAL+SUMVAL
+          YMAT(K)=YMAT(K)+SUMVAL
+          GOTO 10
+   20   CONTINUE
+
+      ENDIF
+
+      IF (GOPARR) CALL RSM_BCAST(916,'F',YMAT,NQMT0A,MASTER)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CALY2
+C>
+C>    @brief   take the trace of density matrix times matrix S 
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NUM: the number of cartesian gaussian basis functions
+C>             PAO: density matrix in atomic orbital
+C>             YMAT: -tr(D*S), where D is the denisty matrix
+C>
+      SUBROUTINE RSM_CALY2(NUM,PAO,YMAT)
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: NUM
+      DOUBLE PRECISION, INTENT(IN   ) :: PAO(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: YMAT
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: SMT(:)
+C
+      INTEGER                         :: L1, L2, I, J, IJ
+      DOUBLE PRECISION                :: VAL
+C
+      L1 = NUM
+      L2 = NUM*(NUM+1)/2
+
+      ALLOCATE(SMT(L2))
+
+      CALL RSM_DARE(SMT,L2,43,0)
+
+      YMAT = 0.0D+00
+      IJ = 0
+      DO I=1,L1
+        DO J=1,I
+          IJ = IJ + 1
+
+          VAL = SMT(IJ)*PAO(IJ)
+          IF(I /= J) VAL = VAL + VAL
+
+          YMAT = YMAT - VAL
+        ENDDO
+      ENDDO
+
+      DEALLOCATE(SMT)
+
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CALY3
+C>
+C>    @brief   compute the last term of eq 18 in JCP, 155, 204102 (2021)
+C>             (part I)
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IRSSQF: file number of scratch file
+C>             NUM: the number of cartesian gaussian basis functions
+C>             NQMT0A: the number of auxiriary basis set
+C>             IC: scratch matrix
+C>             RA: the last term of eq 18
+C>             YMAT: input vector 
+C>
+
+      SUBROUTINE RSM_CALY3(IRSSQF,NUM,NQMT0A,IC,RA,YMAT)
+C
+      USE RISM_MOD, ONLY : MASWRK, GOPARR, MASTER
+C
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: IRSSQF, NUM, NQMT0A
+      INTEGER,          INTENT(  OUT) :: IC(NUM,*)
+      DOUBLE PRECISION, INTENT(IN   ) :: YMAT(NQMT0A)
+      DOUBLE PRECISION, INTENT(  OUT) :: RA(*)
+C
+      INTEGER                         :: L2, I, J, K, IJ
+      DOUBLE PRECISION                :: VAL
+C
+      L2 = NUM*(NUM+1)/2
+C
+      IJ = 0
+      DO I=1,NUM
+        DO J=1,I
+          IJ = IJ + 1
+
+          IC(I,J) = IJ
+          IC(J,I) = IJ
+        ENDDO
+      ENDDO
+
+      CALL SEQREW(IRSSQF)
+      IF(MASWRK) THEN
+   10   CONTINUE
+          READ(IRSSQF,END=20) I,J,K,VAL
+          IJ=IC(I,J)
+  
+          RA(IJ) = RA(IJ) + VAL*YMAT(K)        
+          GOTO 10
+   20   CONTINUE
+
+      ENDIF
+
+      IF (GOPARR) CALL RSM_BCAST(916,'F',RA,L2,MASTER)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CALY4
+C>
+C>    @brief   compute the last term of eq 18 in JCP, 155, 204102 (2021)
+C>             (part II)
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NUM: the number of cartesian gaussian basis functions
+C>             RA: the last term of eq 18
+C>             YMAT: input vector
+C>
+      SUBROUTINE RSM_CALY4(NUM,RA,YMAT)
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: NUM
+      DOUBLE PRECISION, INTENT(IN   ) :: YMAT
+      DOUBLE PRECISION, INTENT(  OUT) :: RA(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: SMT(:)
+C
+      INTEGER                         :: L1, L2, I, J, IJ 
+C
+      L1 = NUM
+      L2 = NUM*(NUM+1)/2
+
+      ALLOCATE(SMT(L2))
+
+      CALL RSM_DARE(SMT,L2,43,0)
+
+      IJ = 0
+      DO I=1,L1
+        DO J=1,I
+          IJ = IJ + 1
+
+          RA(IJ) = RA(IJ) - SMT(IJ)*YMAT
+        ENDDO
+      ENDDO
+
+      DEALLOCATE(SMT)
+
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_V1CORR
+C>
+C>    @brief   compute the last term of eq 17 in JCP, 155, 204102 (2021)
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   QMT: the inverse matrix of X matrix, which is given 
+C>                  in JCP, 155, 204102 (2021)
+C>             VPR: V matrix in JCP, 155, 204102 (2021)
+C>             DMAT: d matrix in JCP, 155, 204102 (2021)
+C>             V1: the last term of eq 17 in JCP, 155, 204102 (2021)
+C>
+      SUBROUTINE RSM_V1CORR(QMT,VPR,DMAT,V1)
+C
+      USE ABSMOD,   ONLY : NQMT0A,KATM_QMT0A,NRAD,FMAT,NMUESP,XMUMX
+      USE RSMSED,   ONLY : NAT
+C
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(IN   ) :: QMT(NQMT0A+1,*),VPR(*),DMAT(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: V1(NQMT0A,*)
+C
+      DOUBLE PRECISION, ALLOCATABLE  :: GMAT(:,:),WRK1(:),RLN(:),WGHT(:)
+      INTEGER, ALLOCATABLE           :: ISTRT(:), IEND(:)
+C
+      INTEGER               :: NMU, IATM0, IATM, I, J, II, I1, I2, IRAD,
+     *                         IJMAX, IJMIN
+      DOUBLE PRECISION      :: XMU2, VAL, FCT1, FCT2, FCT3, QU, AVAL
+C
+      ALLOCATE(GMAT(NQMT0A,NQMT0A),WRK1(NQMT0A+1),RLN(NRAD),WGHT(NRAD))
+      ALLOCATE(ISTRT(NAT),IEND(NAT))
+C
+      NMU  = NMUESP
+      XMU2 = XMUMX**(1.0D+00/REAL(NMU-2,8))
+C
+      CALL RSM_FITGRID(NRAD,RLN,WGHT)
+C
+      ISTRT(1  ) = 1
+      IEND (NAT) = NQMT0A
+      IATM0 = 1
+      DO II=1,NQMT0A
+        IATM = KATM_QMT0A(II)
+
+        IF(IATM > IATM0) THEN
+          IATM0 = IATM
+          ISTRT(IATM) = II
+        ENDIF
+      ENDDO
+
+      DO I=1,NAT-1
+        IEND(I) = ISTRT(I+1) - 1
+      ENDDO
+C
+      DO I=1,NQMT0A+1
+        VAL = 0.0D+00
+        DO J=1,NQMT0A
+          VAL = VAL + VPR(J)*QMT(J,I)
+        ENDDO
+        WRK1(I) = VAL
+      ENDDO
+C
+      GMAT = 0.0D+00
+      DO II=1,NQMT0A
+        IATM = KATM_QMT0A(II)
+        I1   = ISTRT(IATM)
+        I2   = IEND (IATM)
+
+        DO IRAD=1,NRAD
+          FCT1 = WGHT(IRAD)
+
+          QU = 0.0D+00
+          DO I=I1,I2
+            QU = QU + DMAT(I)*FMAT(I,IRAD)
+          ENDDO
+
+          IF(QU < 0.0D+00) THEN
+            AVAL = ABS(QU)*XMU2
+
+            FCT2 = FCT1*(AVAL**(NMU-3))*FMAT(II,IRAD)*WRK1(II)
+            DO I=I1,I2
+              FCT3 = FCT2*FMAT(I,IRAD)
+              DO J=I1,I
+                GMAT(J,I) = GMAT(J,I) + FCT3*FMAT(J,IRAD)
+              ENDDO
+            ENDDO
+          ENDIF
+        ENDDO
+      ENDDO
+
+      DO I=1,NQMT0A
+        DO J=1,NQMT0A
+          IJMAX = MAX(I,J)
+          IJMIN = MIN(I,J)
+          VAL   = XMU2*REAL((NMU-1)*(NMU-2),8)*GMAT(IJMIN,IJMAX)
+
+          V1(J,I) = V1(J,I) - VAL     ! 2020/11/23 test
+        ENDDO
+      ENDDO
+C
+      DEALLOCATE(GMAT,WRK1,RLN,WGHT,ISTRT,IEND)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CPRISM2
+C>
+C>    @brief   perform CP-RISM calculation with respect to the change
+C>             of ccordinate
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   V2: partial derivative of V with respect to coordinate
+C>
+      SUBROUTINE RSM_CPRISM2(V2)
+C
+      USE RISM_IO,  ONLY : IW
+      USE ABSMOD,   ONLY : NQMT0A, KATM_QMT0A
+      USE RSMSED,   ONLY : C, NAT
+      USE RISM_MOD, ONLY : IGRD_TYP, NU, NV, NTAB, RTAB, RKTAB, CLTYP,
+     *                     ALPA, BETA, QV, INDU, INDV,
+     *                     ET0, FQS, FNEP, WU, HWV, HREF, DENV,
+     *                     MXDIIS, CSB, FQLK, 
+     *                     MASWRK, GOPARR, MASTER, RSM_ISTIEND
+      USE FFT_MOD,  ONLY : RSM_INITIAL_UN, RSM_INITIAL_LN,
+     *                     RSM_CLOSEFFT_UN, RSM_CLOSEFFT_LN, 
+     *                     RSM_FFT1D_UN, RSM_FFT1D_LN0
+
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(  OUT) :: V2(NQMT0A,3*NAT)
+C
+      DOUBLE PRECISION, PARAMETER     :: ONESIX=0.1666666666666666666666
+     *                                            66666667D+00
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: VDUM(:,:,:),H0(:,:,:),
+     *                                   TERM1(:,:,:),DES(:,:,:),
+     *                                   DES0(:,:,:),DC(:,:,:),
+     *                                   WRK(:,:,:),FFT(:),XOPT(:)
+C
+      DOUBLE PRECISION                :: CL_HNC,CL_KH,CL_PSE2,CL_PSE3
+      DATA CL_HNC,CL_KH,CL_PSE2,CL_PSE3/8HHNC     ,8HKH      ,
+     *                                  8HPSE2    ,8HPSE3    /
+C
+      DOUBLE PRECISION                :: RSM_EXPDMP
+C
+      INTEGER               :: NTOT, NDIM, L16, ISTRT, IEND, NTOT_PARR,
+     *                         NREQ1, LFO, LQO, LU, LDF, LA, LW, JATM,
+     *                         I, J, K, L, IU, IV, JJ, IXYZ, ITER, NM
+      DOUBLE PRECISION      :: PI, FPI, G0, SUM, SUM2, DIFFI, ABRYD, 
+     *                         ALPHA, XMN, R2, WWW
+C
+      PI = ACOS(-1.0D+00)
+      FPI=4.0D+00*PI
+C
+      NTOT = NU*NV
+      NDIM = NTAB*NTOT
+
+      L16 = NTAB*NV*NQMT0A
+C
+      CALL RSM_ISTIEND(3*NAT,ISTRT,IEND,NTOT_PARR)
+C
+      NREQ1 = NDIM + NDIM + NDIM*MXDIIS + NDIM*MXDIIS + MXDIIS
+     *        + MXDIIS*MXDIIS
+
+      LFO  = 1                  !
+      LQO  = LFO  + NDIM        !
+      LU   = LQO  + NDIM
+      LDF  = LU   + NDIM*MXDIIS
+      LA   = LDF  + NDIM*MXDIIS
+      LW   = LA   + MXDIIS*MXDIIS
+C
+C     ALLOCATE
+C
+      ALLOCATE(VDUM(NTAB,NV,NQMT0A),H0(NTAB,NU,NV),TERM1(NTAB,NU,NV),
+     *         DES(NTAB,NU,NV),DES0(NTAB,NU,NV),DC(NTAB,NU,NV),
+     *         WRK(NTAB,NU,NV),FFT(NTAB),XOPT(NREQ1))
+C 
+C     RISM CALCULATION
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_INITIAL_UN
+      ELSE
+        CALL RSM_INITIAL_LN(0)
+      ENDIF
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+C
+C     ----- CP-RISM CALCULATION -----
+C
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+C
+C     PREPARE H0 and CB
+C
+      CALL RSM_DARE(FNEP ,NDIM, 12,0)
+      CALL RSM_DARE(FQS  ,NDIM, 19,0)
+      CALL RSM_DARE(ET0  ,NDIM, 16,0)
+      CALL RSM_DARE(VDUM ,L16 , 96,0)
+C
+      IF(CLTYP.EQ.CL_HNC) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+            
+            H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+          ENDDO
+        ENDDO
+      ELSEIF(CLTYP.EQ.CL_KH) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+
+            IF(SUM <= 0.0D+00) THEN
+              H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+            ELSE
+              H0(K,IU,IV)=G0*SUM 
+            ENDIF
+          ENDDO
+        ENDDO
+      ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+
+            IF(SUM <= 0.0D+00) THEN
+              H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+            ELSE
+              SUM2 = SUM * SUM
+
+              H0(K,IU,IV)=G0*(SUM + 0.5D+00*SUM2)
+            ENDIF
+          ENDDO
+        ENDDO
+      ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+
+            IF(SUM <= 0.0D+00) THEN
+              H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+            ELSE
+              SUM2 = SUM * SUM
+
+              H0(K,IU,IV)=G0*(SUM + 0.5D+00*SUM2 + ONESIX*SUM*SUM2)
+            ENDIF
+          ENDDO
+        ENDDO
+      ENDIF
+
+      V2 = 0.0D+00
+      DO IXYZ=ISTRT,IEND
+C
+C       PREPARE WRK2
+C
+        CALL RSM_CPTERM1(IXYZ,NU,NV,NTAB,C,RKTAB,CSB,FQLK,HWV,TERM1)
+C
+C       START ITERATION
+C
+        DES0 = 0.0D+00
+        NM   = 0
+        LOOP_ITER1 : DO ITER=1,100000
+C
+C         ----- PREPARE DC 
+C
+          DO J=1,NV
+            DO I=1,NU
+              IF(CLTYP.EQ.CL_HNC) THEN
+                DO K=1,NTAB
+                  DC(K,I,J) = H0(K,I,J)*DES0(K,I,J)
+                ENDDO
+              ELSEIF(CLTYP.EQ.CL_KH) THEN
+                DO K=1,NTAB
+                  IF(H0(K,I,J)<= 0.0d0) THEN
+                    DC(K,I,J) = H0(K,I,J)*DES0(K,I,J)
+                  ELSE
+                    DC(K,I,J) = 0.0D+00
+                  ENDIF
+                ENDDO
+              ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+                DO K=1,NTAB
+                  SUM= FNEP(K,NU*(J-1)+I)
+     *               + FQS (K,NU*(J-1)+I)
+     *               + ET0 (K,NU*(J-1)+I)
+
+                  IF(SUM <= 0.0d0) THEN
+                    DC(K,I,J) = H0(K,I,J)*DES0(K,I,J)
+                  ELSE
+                    DC(K,I,J) = SUM*DES0(K,I,J)
+                  ENDIF
+                ENDDO
+              ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+                DO K=1,NTAB
+                  SUM= FNEP(K,NU*(J-1)+I)
+     *               + FQS (K,NU*(J-1)+I)
+     *               + ET0 (K,NU*(J-1)+I)
+
+                  IF(SUM <= 0.0d0) THEN
+                    DC(K,I,J) = H0(K,I,J)*DES0(K,I,J)
+                  ELSE
+                    DC(K,I,J) = (SUM+0.5D+00*SUM*SUM)*DES0(K,I,J)
+                  ENDIF
+                ENDDO
+              ENDIF
+            ENDDO
+          ENDDO
+C
+C       FORWARD FFT
+C
+          IF(IGRD_TYP == 0) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DC(K,J,I)*RTAB(K)
+                ENDDO
+
+                CALL RSM_FFT1D_UN(1,FFT)
+
+                DO K=2,NTAB
+                  DC(K,J,I)=FFT(K)/RKTAB(K)
+                ENDDO
+                DC(1,J,I)=DC(2,J,I)
+              ENDDO
+            ENDDO
+          ELSE
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DC(K,J,I)
+                ENDDO
+                FFT(NTAB)=0.0D+00
+
+                CALL RSM_FFT1D_LN0(1,FFT)
+
+                DO K=1,NTAB
+                  DC(K,J,I)=FFT(K)
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDIF
+C
+C        ----- GET DES
+C
+          DO J=1,NV
+            DO I=1,NU
+              FFT = 0.0D+00
+              DO L=1,NV
+                DO K=1,NTAB
+                  FFT(K) = FFT(K) + DC(K,I,L)*HWV(K,L,J)
+                ENDDO
+              ENDDO
+ 
+              DO K=1,NTAB
+                WRK(K,I,J) = FFT(K)
+              ENDDO
+            ENDDO
+          ENDDO
+
+          DO J=1,NV
+            DO I=1,NU
+              FFT = 0.0D+00
+              DO L=1,NU
+                DO K=1,NTAB
+                  FFT(K) = FFT(K) + WU(K,L,I)*WRK(K,L,J)
+                ENDDO
+              ENDDO
+
+              DO K=1,NTAB
+                DES(K,I,J) = FFT(K) + TERM1(K,I,J) - DC(K,I,J)
+              ENDDO
+            ENDDO
+          ENDDO
+C
+C       BACKWARD FFT
+C
+          IF(IGRD_TYP == 0) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DES(K,J,I)*RKTAB(K)
+                ENDDO
+
+                CALL RSM_FFT1D_UN(2,FFT)
+
+                DO K=2,NTAB
+                  DES(K,J,I)=FFT(K)/RTAB(K)
+                ENDDO
+                DES(1,J,I)=DES(2,J,I)
+              ENDDO
+            ENDDO
+          ELSE
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DES(K,J,I)
+                ENDDO
+                FFT(NTAB)=0.0D+00
+
+                CALL RSM_FFT1D_LN0(2,FFT)
+
+                DO K=1,NTAB
+                  DES(K,J,I)=FFT(K)
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDIF
+C
+C     ----- Check the Convergence for the Inner Loop -----
+C
+          DIFFI=0.0D+00
+          DO I=1,NV
+            DO J=1,NU
+              DO K=1,NTAB
+                DIFFI=DIFFI+(DES(K,J,I)-DES0(K,J,I))**2
+              ENDDO
+            ENDDO
+          ENDDO
+          DIFFI=SQRT(DIFFI/FLOAT(NU*NV))
+
+!         IF(DIFFI.LT.1.0D-12.and.ITER.GT.400) EXIT LOOP_ITER1
+          IF(DIFFI.LT.1.0D-12              ) EXIT LOOP_ITER1
+
+          IF(DIFFI.LT.1.0D-12.and.ITER == 1) EXIT LOOP_ITER1
+C
+C        Print out
+C
+          IF(MOD(ITER,20).EQ.1 .and. MASWRK) THEN
+            WRITE(IW,'(10X,2I5,F20.15)')ITER,IXYZ,DIFFI
+          ENDIF
+C
+C     ----- Update the Functions -----
+C
+          ABRYD = 0.2D+00
+
+          NM    = NM + 1
+          ALPHA = 0.2D+00
+          XMN   = 0.2D+00
+
+          CALL RSM_XMBRYD2(.FALSE.,NM,NDIM,MXDIIS,DES,DES0,
+     *                  XOPT(LFO),XOPT(LQO),XOPT(LU),XOPT(LDF),
+     *                  XOPT(LW),XOPT(LA),ALPHA,XMN)
+        ENDDO LOOP_ITER1
+C
+C       ----- GET DH/DR => WRK3
+C
+        DO IV=1,NV
+          DO IU=1,NU
+            IF(CLTYP.EQ.CL_HNC) THEN
+              DO K=1,NTAB
+                WRK(K,IU,IV) = (H0(K,IU,IV)+1.0D+00)*DES0(K,IU,IV)
+              ENDDO
+            ELSEIF(CLTYP.EQ.CL_KH) THEN
+              DO K=1,NTAB
+                IF(H0(K,IU,IV) <= 0.0D+00) THEN
+                  WRK(K,IU,IV) = (H0(K,IU,IV)+1.0D+00)*DES0(K,IU,IV)
+                ELSE
+                  WRK(K,IU,IV) = DES0(K,IU,IV)
+                ENDIF
+              ENDDO
+            ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+              DO K=1,NTAB
+                SUM= FNEP(K,NU*(IV-1)+IU)
+     *             + FQS (K,NU*(IV-1)+IU)
+     *             + ET0 (K,NU*(IV-1)+IU)
+
+                IF(SUM <= 0.0D+00) THEN
+                  WRK(K,IU,IV) = (H0(K,IU,IV)+1.0D+00)*DES0(K,IU,IV)
+                ELSE
+                  WRK(K,IU,IV) = (1.0D+00+SUM)*DES0(K,IU,IV)
+                ENDIF
+              ENDDO
+            ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+              DO K=1,NTAB
+                SUM= FNEP(K,NU*(IV-1)+IU)
+     *             + FQS (K,NU*(IV-1)+IU)
+     *             + ET0 (K,NU*(IV-1)+IU)
+
+                IF(SUM <= 0.0D+00) THEN
+                  WRK(K,IU,IV) = (H0(K,IU,IV)+1.0D+00)*DES0(K,IU,IV)
+                ELSE
+                  SUM2 = SUM*SUM
+
+                  WRK(K,IU,IV) =(1.0D+00+SUM+0.5D+00*SUM2)*DES0(K,IU,IV)
+                ENDIF
+              ENDDO
+            ENDIF
+          ENDDO
+        ENDDO
+C
+C
+C
+        DO JJ=1,NQMT0A
+          JATM = KATM_QMT0A(JJ)
+
+          FFT = 0.0D+00
+          DO I=1,NV
+            DO K=1,NTAB
+              R2     = RTAB(K)*RTAB(K)
+              FFT(K) = FFT(K) + R2*DENV(I)*WRK(K,JATM,I)*VDUM(K,I,JJ)
+            ENDDO
+          ENDDO
+
+          CALL RSM_TRPLN(NTAB,RTAB,FFT,WWW)
+
+          V2(JJ,IXYZ) = - FPI * WWW
+        ENDDO
+      ENDDO
+C
+      IF(GOPARR) CALL RSM_GSUMF(10001,V2,NQMT0A*3*NAT)
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_CLOSEFFT_UN
+      ELSE
+        CALL RSM_CLOSEFFT_LN
+      ENDIF
+C
+      DEALLOCATE(VDUM,H0,TERM1,DES,DES0,DC,WRK,FFT,XOPT)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CPTERM1
+C>
+C>    @brief   compute the derivative of intramolecular correlation 
+C>             function with respect to the coordinates
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IXYZ: index of the atomic coordinate for the derivative
+C>             NU  : the number of solute site
+C>             NV  : the number of solvent site
+C>             NTAB: the number of grid points
+C>             C   : atomic coordinate
+C>             RKTAB: grid points of reciprocal space
+C>             CSB:  the short range part of direct correlation function
+C>             FQLK: the long range of electrostatic potential in reciprocal 
+C>                   space
+C>             HWV: site-site susceptibility of the bulk solven
+C>             TERM1: the first term of eq 24 in JCP, 154, 154101 (2021)
+C>
+      SUBROUTINE RSM_CPTERM1(IXYZ,NU,NV,NTAB,C,RKTAB,CSB,FQLK,HWV,TERM1)
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: IXYZ, NU, NV, NTAB
+      DOUBLE PRECISION, INTENT(IN   ) :: C(3,*),RKTAB(*),CSB(NTAB,NU,*),
+     *                                   FQLK(NTAB,NU,*),HWV(NTAB,NV,*)
+      DOUBLE PRECISION, INTENT(  OUT) :: TERM1(NTAB,NU,*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: WRK1(:,:,:),WRK2(:,:,:)
+C
+      INTEGER                :: IATOM, JXYZ, IV, IU, JV, JU, K
+      DOUBLE PRECISION       :: DXYZ(3), R1, R1I, FAC0, FAC1, FAC2, RK,
+     *                          VAL, SUM
+C
+      ALLOCATE(WRK1(NTAB,NU,NU),WRK2(NTAB,NU,NV))
+C
+      IATOM = (IXYZ-1)/3 + 1
+      JXYZ  = IXYZ - 3*(IATOM-1)
+
+      WRK1  = 0.0D+00
+      DO JU=1,NU
+        IF(JU /= IATOM) THEN
+          DXYZ(1) = C(1,IATOM) - C(1,JU)
+          DXYZ(2) = C(2,IATOM) - C(2,JU)
+          DXYZ(3) = C(3,IATOM) - C(3,JU)
+
+          R1   = SQRT(DXYZ(1)*DXYZ(1)+DXYZ(2)*DXYZ(2)+DXYZ(3)*DXYZ(3))
+          R1I  = 1.0D+00/R1
+          FAC0 = DXYZ(JXYZ)/R1
+          DO K=1,NTAB
+            RK = MAX(RKTAB(K),1.0D-30)
+            FAC1 = COS(RK*R1)*R1I
+            FAC2 = SIN(RK*R1)*R1I*R1I/RK
+            IF(RK < 1.0D-10) FAC2 = R1I
+
+            VAL = FAC0*(FAC1-FAC2)
+            WRK1(K,IATOM,JU) = VAL
+            WRK1(K,JU,IATOM) = VAL
+          ENDDO
+        ENDIF
+      ENDDO
+C
+C     PREPARE WRK2
+C
+      DO IV=1,NV
+        DO IU=1,NU
+          DO K=1,NTAB
+            SUM = 0.0D+00
+            DO JV=1,NV
+              SUM = SUM + (CSB(K,IU,JV)+FQLK(K,IU,JV))*HWV(K,JV,IV)
+            ENDDO
+            WRK2(K,IU,IV)=SUM
+          ENDDO
+        ENDDO
+      ENDDO
+C
+      DO IV=1,NV
+        DO IU=1,NU
+          DO K=1,NTAB
+            SUM = 0.0D+00
+            DO JU=1,NU
+              SUM = SUM + WRK1(K,JU,IU)*WRK2(K,JU,IV)
+            ENDDO
+            TERM1(K,IU,IV)=SUM
+          ENDDO
+        ENDDO
+      ENDDO
+C
+      DEALLOCATE(WRK1,WRK2)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_EHMOD_CPHF
+C>
+C>    @brief   add the CP-RISM terms to the force constant matrix
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NAT    : the number of atoms
+C>             NQMT0A : the number of auxiriary basis set
+C>             V1A+V1B: eq 17 in JCP, 155, 204102 (2021)
+C>             V2     : V[a] in JCP, 155, 204102 (2021)
+C>             FD1    : tV*X^{-1}*Xi[a] in JCP, 155, 204102 (2021)
+C>             DDA    : Delta d[a] in JCP, 155, 204102 (2021)
+C>             EH     : Hessian matrix 
+C>
+      SUBROUTINE RSM_EHMOD_CPHF(NAT,NQMT0A,V1A,V1B,V2,FD1,DDA,EH)
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: NAT, NQMT0A
+      DOUBLE PRECISION, INTENT(IN   ) :: V1A(NQMT0A,NQMT0A),
+     *                                   V2(NQMT0A,3,NAT),
+     *                                   FD1(NQMT0A,3,NAT),
+     *                                   DDA(NQMT0A+1,3,NAT),
+     *                                   V1B(NQMT0A,NQMT0A)
+      DOUBLE PRECISION, INTENT(  OUT) :: EH(9,*)
+
+      INTEGER                         :: IAT, JAT, IJAT, I, J, K, IJ
+      DOUBLE PRECISION                :: WRK1(9), VAL
+      DOUBLE PRECISION, ALLOCATABLE   :: WRK2(:,:,:)
+C
+      ALLOCATE(WRK2(NQMT0A,3,NAT))
+C
+      DO IAT=1,NAT
+        DO I=1,3
+          DO J=1,NQMT0A
+            VAL = 0.0D+00
+            DO K=1,NQMT0A
+              VAL = VAL + (V1A(K,J)+V1B(K,J))*DDA(K,I,IAT)
+            ENDDO
+            WRK2(J,I,IAT) = VAL
+          ENDDO
+        ENDDO
+      ENDDO
+C
+      IJAT =0
+      DO IAT=1,NAT
+        DO JAT=1,IAT
+          IJAT = IJAT + 1
+C
+C     TERM[1]
+C
+          WRK1 = 0.0D+00
+          IJ = 0
+          DO I=1,3
+            DO J=1,3
+              IJ = IJ + 1
+
+              VAL = 0.0D+00
+              DO K=1,NQMT0A
+                VAL = VAL + V2(K,I,IAT)*DDA(K,J,JAT)
+     *                    + V2(K,J,JAT)*DDA(K,I,IAT)
+              ENDDO
+              WRK1(IJ) =VAL
+            ENDDO
+          ENDDO
+
+          DO I=1,9
+            EH(I,IJAT) = EH(I,IJAT) + WRK1(I)
+          ENDDO
+C
+C     TERM[2] 
+C
+          IJ = 0
+          WRK1 = 0.0D+00
+          DO I=1,3
+            DO J=1,3
+              IJ = IJ + 1
+
+              VAL = 0.0D+00
+              DO K=1,NQMT0A
+                VAL = VAL + WRK2(K,I,IAT)*DDA(K,J,JAT)
+              ENDDO
+              WRK1(IJ) =VAL
+            ENDDO
+          ENDDO
+
+          DO I=1,9
+            EH(I,IJAT) = EH(I,IJAT) + WRK1(I)
+          ENDDO
+C
+C      TETM[3a]
+C
+          IJ = 0
+          WRK1 = 0.0D+00
+          DO I=1,3
+            DO J=1,3
+              IJ = IJ + 1
+
+              VAL = 0.0D+00
+              DO K=1,NQMT0A
+                VAL = VAL + FD1(K,I,IAT)*DDA(K,J,JAT)
+              ENDDO
+              WRK1(IJ) =VAL
+            ENDDO
+          ENDDO
+
+          DO I=1,9
+            EH(I,IJAT) = EH(I,IJAT) - WRK1(I)
+          ENDDO
+C
+C      TETM[3a]
+C
+          IJ = 0
+          WRK1 = 0.0D+00
+          DO I=1,3
+            DO J=1,3
+              IJ = IJ + 1
+
+              VAL = 0.0D+00
+              DO K=1,NQMT0A
+                VAL = VAL + FD1(K,J,JAT)*DDA(K,I,IAT)
+              ENDDO
+              WRK1(IJ) =VAL
+            ENDDO
+          ENDDO
+
+          DO I=1,9
+            EH(I,IJAT) = EH(I,IJAT) - WRK1(I)
+          ENDDO
+        ENDDO
+      ENDDO
+
+      DEALLOCATE(WRK2)
+
+      END SUBROUTINE
+C*MODULE RSM_CPRSM  *DECK RSM_CPRISM3
+C>
+C>    @brief   perform CP-RISM calculation with respect to the change
+C>             of ccordinate and compute hessian matrix
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   V2: partial derivative of V with respect to coordinate
+C>             EH: Hessian matrix
+C>
+      SUBROUTINE RSM_CPRISM3(V2,EH)
+C
+      USE RISM_IO,  ONLY : IW
+      USE ABSMOD,   ONLY : NQMT0A, KATM_QMT0A
+      USE RSMSED,   ONLY : C, NAT
+      USE RISM_MOD, ONLY : IGRD_TYP, NU, NV, NTAB, RTAB, RKTAB, CLTYP,
+     *                     ALPA, BETA, QV, INDU, INDV,
+     *                     ET0, FQS, FNEP, WU, HWV, HREF, DENV,
+     *                     MXDIIS, CSB, FQLK, 
+     *                     MASWRK, GOPARR, MASTER,
+     *                     RSM_ISTIEND,RKMX_SYMP
+      USE FFT_MOD,  ONLY : RSM_INITIAL_UN, RSM_INITIAL_LN,
+     *                     RSM_CLOSEFFT_UN, RSM_CLOSEFFT_LN, 
+     *                     RSM_FFT1D_UN, RSM_FFT1D_LN0
+
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(  OUT) :: V2(NQMT0A,3*NAT)
+      DOUBLE PRECISION, INTENT(INOUT) :: EH(9,*)
+C
+      DOUBLE PRECISION, PARAMETER     :: ONESIX=0.1666666666666666666666
+     *                                            66666667D+00
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: VDUM(:,:,:),H0(:,:,:),
+     *                                   TERM1(:,:,:),DES(:,:,:),
+     *                                   DES0(:,:,:),DC(:,:,:),
+     *                                   WRK(:,:,:),FFT(:),XOPT(:),
+     *                                   EHTMP(:,:,:,:)
+C
+      DOUBLE PRECISION                :: CL_HNC,CL_KH,CL_PSE2,CL_PSE3
+      DATA CL_HNC,CL_KH,CL_PSE2,CL_PSE3/8HHNC     ,8HKH      ,
+     *                                  8HPSE2    ,8HPSE3    /
+C
+      INTEGER               :: MAXIT, NTOT, NDIM, L16, ISTRT, IEND, 
+     *                         NTOT_PARR, NREQ1, 
+     *                         LFO, LQO, LU, LDF, LA, LW, I, J, K, L,
+     *                         IV, IU, IATM, JATM, IJAT, IXYZ, JXYZ, IJ,
+     *                         ITER, NM, JJ
+      DOUBLE PRECISION      :: PI, FPI, G0, SUM, SUM2, ABRYD, ALPHA, 
+     *                         WWW, XMN, DIFFI, R2
+      DOUBLE PRECISION      :: RSM_EXPDMP
+C
+      MAXIT=300
+C
+      PI = ACOS(-1.0D+00)
+      FPI=4.0D+00*PI
+C
+      NTOT = NU*NV
+      NDIM = NTAB*NTOT
+
+      L16 = NTAB*NV*NQMT0A
+C
+      CALL RSM_ISTIEND(3*NAT,ISTRT,IEND,NTOT_PARR)
+C
+      NREQ1 = NDIM + NDIM + NDIM*MXDIIS + NDIM*MXDIIS + MXDIIS
+     *        + MXDIIS*MXDIIS
+
+      LFO  = 1                  !
+      LQO  = LFO  + NDIM        !
+      LU   = LQO  + NDIM
+      LDF  = LU   + NDIM*MXDIIS
+      LA   = LDF  + NDIM*MXDIIS
+      LW   = LA   + MXDIIS*MXDIIS
+C
+C     ALLOCATE
+C
+      ALLOCATE(VDUM(NTAB,NV,NQMT0A),H0(NTAB,NU,NV),TERM1(NTAB,NU,NV),
+     *         DES(NTAB,NU,NV),DES0(NTAB,NU,NV),DC(NTAB,NU,NV),
+     *         WRK(NTAB,NU,NV),FFT(NTAB),XOPT(NREQ1),EHTMP(3,3,NAT,NAT))
+C 
+C     RISM CALCULATION
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_INITIAL_UN
+      ELSE
+        CALL RSM_INITIAL_LN(0)
+      ENDIF
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+C
+C     ----- CP-RISM CALCULATION -----
+C
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+C
+C     PREPARE H0 and CB
+C
+      CALL RSM_DARE(FNEP ,NDIM, 12,0)
+      CALL RSM_DARE(FQS  ,NDIM, 19,0)
+      CALL RSM_DARE(ET0  ,NDIM, 16,0)
+      CALL RSM_DARE(VDUM ,L16 , 96,0)
+C
+      IF(CLTYP.EQ.CL_HNC) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+            
+            H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+          ENDDO
+        ENDDO
+      ELSEIF(CLTYP.EQ.CL_KH) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+
+            IF(SUM <= 0.0D+00) THEN
+              H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+            ELSE
+              H0(K,IU,IV)=G0*SUM 
+            ENDIF
+          ENDDO
+        ENDDO
+      ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+
+            IF(SUM <= 0.0D+00) THEN
+              H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+            ELSE
+              SUM2 = SUM*SUM
+
+              H0(K,IU,IV)=G0*(SUM+0.5D+00*SUM2)
+            ENDIF
+          ENDDO
+        ENDDO
+      ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+        DO I=1,NTOT
+          IU=INDU(I)
+          IV=INDV(I)
+          DO K=1,NTAB
+            G0 = HREF(K,I) + 1.0D+00
+            SUM= FNEP(K,I)+FQS(K,I)+ET0(K,I)
+
+            IF(SUM <= 0.0D+00) THEN
+              H0(K,IU,IV)=G0*RSM_EXPDMP(SUM)-1.0D+00
+            ELSE
+              SUM2 = SUM*SUM
+
+              H0(K,IU,IV)=G0*(SUM+0.5D+00*SUM2+ONESIX*SUM2*SUM)
+            ENDIF
+          ENDDO
+        ENDDO
+      ENDIF
+
+      V2 = 0.0D+00
+      EHTMP = 0.0D+00
+      DO IXYZ=ISTRT,IEND
+C
+C       PREPARE WRK2
+C
+        CALL RSM_CPTERM1(IXYZ,NU,NV,NTAB,C,RKTAB,CSB,FQLK,HWV,TERM1)
+C
+C       START ITERATION
+C
+        DES0 = 0.0D+00
+        NM   = 0
+        LOOP_ITER1 : DO ITER=1,100000
+C
+C         ----- PREPARE DC 
+C
+          DO J=1,NV
+            DO I=1,NU
+              IF(CLTYP.EQ.CL_HNC) THEN
+                DO K=1,NTAB
+                  DC(K,I,J) = H0(K,I,J)*DES0(K,I,J)
+                ENDDO
+              ELSEIF(CLTYP.EQ.CL_KH) THEN
+                DO K=1,NTAB
+                  IF(H0(K,I,J)<= 0.0d0) THEN
+                    DC(K,I,J) = H0(K,I,J)*DES0(K,I,J)
+                  ELSE
+                    DC(K,I,J) = 0.0D+00
+                  ENDIF
+                ENDDO
+              ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+                DO K=1,NTAB
+                  SUM= FNEP(K,NU*(J-1)+I)
+     *               + FQS (K,NU*(J-1)+I)
+     *               + ET0 (K,NU*(J-1)+I)
+
+                  IF(SUM <= 0.0d0) THEN
+                    DC(K,I,J) = H0(K,I,J)*DES0(K,I,J)
+                  ELSE
+                    DC(K,I,J) = SUM*DES0(K,I,J)
+                  ENDIF
+                ENDDO
+              ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+                DO K=1,NTAB
+                  SUM= FNEP(K,NU*(J-1)+I)
+     *               + FQS (K,NU*(J-1)+I)
+     *               + ET0 (K,NU*(J-1)+I)
+
+                  IF(SUM <= 0.0d0) THEN
+                    DC(K,I,J) = H0(K,I,J)*DES0(K,I,J)
+                  ELSE
+                    DC(K,I,J) = (SUM+0.5D+00*SUM*SUM)*DES0(K,I,J)
+                  ENDIF
+                ENDDO
+              ENDIF
+            ENDDO
+          ENDDO
+C
+C       FORWARD FFT
+C
+          IF(IGRD_TYP == 0) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DC(K,J,I)*RTAB(K)
+                ENDDO
+
+                CALL RSM_FFT1D_UN(1,FFT)
+
+                DO K=2,NTAB
+                  DC(K,J,I)=FFT(K)/RKTAB(K)
+                ENDDO
+                DC(1,J,I)=DC(2,J,I)
+              ENDDO
+            ENDDO
+          ELSE
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DC(K,J,I)
+                ENDDO
+                FFT(NTAB)=0.0D+00
+
+                CALL RSM_FFT1D_LN0(1,FFT)
+
+                DO K=1,NTAB
+                  DC(K,J,I)=FFT(K)
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDIF
+C
+C        ----- GET DES
+C
+          DO J=1,NV
+            DO I=1,NU
+              FFT = 0.0D+00
+              DO L=1,NV
+                DO K=1,NTAB
+                  FFT(K) = FFT(K) + DC(K,I,L)*HWV(K,L,J)
+                ENDDO
+              ENDDO
+ 
+              DO K=1,NTAB
+                WRK(K,I,J) = FFT(K)
+              ENDDO
+            ENDDO
+          ENDDO
+
+          DO J=1,NV
+            DO I=1,NU
+              FFT = 0.0D+00
+              DO L=1,NU
+                DO K=1,NTAB
+                  FFT(K) = FFT(K) + WU(K,L,I)*WRK(K,L,J)
+                ENDDO
+              ENDDO
+
+              DO K=1,NTAB
+                DES(K,I,J) = FFT(K) + TERM1(K,I,J) - DC(K,I,J)
+              ENDDO
+            ENDDO
+          ENDDO
+C
+C       BACKWARD FFT
+C
+          IF(IGRD_TYP == 0) THEN
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DES(K,J,I)*RKTAB(K)
+                ENDDO
+
+                CALL RSM_FFT1D_UN(2,FFT)
+
+                DO K=2,NTAB
+                  DES(K,J,I)=FFT(K)/RTAB(K)
+                ENDDO
+                DES(1,J,I)=DES(2,J,I)
+              ENDDO
+            ENDDO
+          ELSE
+            DO I=1,NV
+              DO J=1,NU
+                DO K=1,NTAB
+                  FFT(K)=DES(K,J,I)
+                ENDDO
+                FFT(NTAB)=0.0D+00
+
+                CALL RSM_FFT1D_LN0(2,FFT)
+
+                DO K=1,NTAB
+                  DES(K,J,I)=FFT(K)
+                ENDDO
+              ENDDO
+            ENDDO
+          ENDIF
+C
+C     ----- Check the Convergence for the Inner Loop -----
+C
+          DIFFI=0.0D+00
+          DO I=1,NV
+            DO J=1,NU
+              DO K=1,NTAB
+                DIFFI=DIFFI+(DES(K,J,I)-DES0(K,J,I))**2
+              ENDDO
+            ENDDO
+          ENDDO
+          DIFFI=SQRT(DIFFI/FLOAT(NU*NV))
+
+          IF(DIFFI.LT.5.0D-12.and.ITER.GT.MAXIT) EXIT LOOP_ITER1
+!         IF(DIFFI.LT.5.0D-13                  ) EXIT LOOP_ITER1
+
+          IF(DIFFI.LT.5.0D-12.and.ITER == 1    ) EXIT LOOP_ITER1
+C
+C        Print out
+C
+          IF(MOD(ITER,200).EQ.1 .and. MASWRK) THEN
+            WRITE(IW,'(10X,2I5,F20.15)')ITER,IXYZ,DIFFI
+          ENDIF
+C
+C     ----- Update the Functions -----
+C
+          ABRYD = 0.2D+00
+
+          NM    = NM + 1
+          ALPHA = 0.2D+00
+          XMN   = 0.2D+00
+
+          CALL RSM_XMBRYD2(.FALSE.,NM,NDIM,MXDIIS,DES,DES0,
+     *                  XOPT(LFO),XOPT(LQO),XOPT(LU),XOPT(LDF),
+     *                  XOPT(LW),XOPT(LA),ALPHA,XMN)
+        ENDDO LOOP_ITER1
+C
+C       ----- GET DH/DR => WRK3
+C
+        DO IV=1,NV
+          DO IU=1,NU
+            IF(CLTYP.EQ.CL_HNC) THEN
+              DO K=1,NTAB
+                WRK(K,IU,IV) = (H0(K,IU,IV)+1.0D+00)*DES0(K,IU,IV)
+              ENDDO
+            ELSEIF(CLTYP.EQ.CL_KH) THEN
+              DO K=1,NTAB
+                IF(H0(K,IU,IV) <= 0.0D+00) THEN
+                  WRK(K,IU,IV) = (H0(K,IU,IV)+1.0D+00)*DES0(K,IU,IV)
+                ELSE
+                  WRK(K,IU,IV) = DES0(K,IU,IV)
+                ENDIF
+              ENDDO
+            ELSEIF(CLTYP.EQ.CL_PSE2) THEN
+              DO K=1,NTAB
+                SUM= FNEP(K,NU*(IV-1)+IU)
+     *             + FQS (K,NU*(IV-1)+IU)
+     *             + ET0 (K,NU*(IV-1)+IU)
+
+                IF(SUM <= 0.0D+00) THEN
+                  WRK(K,IU,IV) = (H0(K,IU,IV)+1.0D+00)*DES0(K,IU,IV)
+                ELSE
+                  SUM2 = SUM*SUM
+
+                  WRK(K,IU,IV) = (1.0D+00+0.5D+00*SUM2)*DES0(K,IU,IV)
+                ENDIF
+              ENDDO
+            ELSEIF(CLTYP.EQ.CL_PSE3) THEN
+              DO K=1,NTAB
+                SUM= FNEP(K,NU*(IV-1)+IU)
+     *             + FQS (K,NU*(IV-1)+IU)
+     *             + ET0 (K,NU*(IV-1)+IU)
+
+                IF(SUM <= 0.0D+00) THEN
+                  WRK(K,IU,IV) = (H0(K,IU,IV)+1.0D+00)*DES0(K,IU,IV)
+                ELSE
+                  SUM2 = SUM*SUM
+
+                  WRK(K,IU,IV) = (1.0D+00+0.5D+00*SUM2+ONESIX*SUM2*SUM)
+     *                          *DES0(K,IU,IV)
+                ENDIF
+              ENDDO
+            ENDIF
+          ENDDO
+        ENDDO
+
+C
+C       PREPARE V2
+C
+        DO JJ=1,NQMT0A
+          JATM = KATM_QMT0A(JJ)
+
+          FFT = 0.0D+00
+          DO I=1,NV
+            DO K=1,NTAB
+              R2     = RTAB(K)*RTAB(K)
+              FFT(K) = FFT(K) + R2*DENV(I)*WRK(K,JATM,I)*VDUM(K,I,JJ)
+            ENDDO
+          ENDDO
+
+          CALL RSM_TRPLN(NTAB,RTAB,FFT,WWW)
+
+          V2(JJ,IXYZ) = - FPI * WWW
+        ENDDO
+C
+C       PREPARE EHTMP
+C
+C
+C       TERM 1
+C
+        JXYZ = 0
+        DO JATM=1, NAT
+          DO K=1,3
+            JXYZ = JXYZ + 1
+
+            CALL RSM_CPTERM3(JXYZ,CSB,FQLK,DC,WWW)
+
+            IATM = (IXYZ-1)/3 + 1
+            L    = IXYZ - 3*(IATM-1)
+            EHTMP(L,K,IATM,JATM) = EHTMP(L,K,IATM,JATM) + WWW 
+C
+C           TERM 2
+C
+            CALL RSM_CPTERM2(IXYZ,JXYZ,CSB,FQLK,WWW)
+
+            EHTMP(L,K,IATM,JATM) = EHTMP(L,K,IATM,JATM) + WWW     
+     
+          ENDDO
+        ENDDO
+      ENDDO
+C
+      IF(GOPARR) THEN
+        CALL RSM_GSUMF(10001,V2   ,NQMT0A*3*NAT)
+        CALL RSM_GSUMF(10002,EHTMP,9*NAT*NAT)
+      ENDIF
+C
+C     ADD TO EH
+C
+      IJAT = 0
+      DO IATM=1,NAT
+        DO JATM=1,IATM
+          IJAT = IJAT + 1
+
+          IJ = 0
+          DO I=1,3
+            DO J=1,3
+              IJ = IJ + 1
+
+              EH(IJ,IJAT) = EH(IJ,IJAT) + EHTMP(I,J,IATM,JATM)
+
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDDO
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_CLOSEFFT_UN
+      ELSE
+        CALL RSM_CLOSEFFT_LN
+      ENDIF
+C
+      DEALLOCATE(VDUM,H0,TERM1,DES,DES0,DC,WRK,FFT,XOPT,EHTMP)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CPTERM2
+C>
+C>    @brief   compute the second derivative of intramolecular correlation
+C>             function with respect to the coordinates
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IXYZ: index of the atomic coordinate for the derivative
+C>             JXYZ: index of the atomic coordinate for the derivative
+C>             CSB:  the short range part of direct correlation function
+C>             FQLK: the long range of electrostatic potential in reciprocal
+C>                   space
+C>             EHTMP: the last line of eq 16 in JCP, 155, 204102 (2021)
+C>
+
+      SUBROUTINE RSM_CPTERM2(IXYZ,JXYZ,CSB,FQLK,EHTMP)
+C
+      USE RISM_MOD, ONLY : NU, NV, NTAB, BETA, DENV, HWV,
+     *                     RKMX_SYMP, RKTAB
+      USE RSMSED,   ONLY : C
+C
+      IMPLICIT NONE
+C
+      INTEGER,INTENT(IN   ) :: IXYZ, JXYZ
+      DOUBLE PRECISION, INTENT(IN   ) :: CSB(NTAB,NU,*), FQLK(NTAB,NU,*)
+      DOUBLE PRECISION, INTENT(  OUT) :: EHTMP
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: WRK1(:,:,:),WRK2(:,:,:),WRK3(:)
+C
+      INTEGER               :: IATM, JATM, IN, JN, IGRID, IU, JU, 
+     *                         I, J, K, KV, LV
+      DOUBLE PRECISION      :: DXYZ(3), PI, FPI, RK, VAL, PFACT,
+     *                         FAC1, FAC2, FAC3, FAC4, FAC5,
+     *                         R1, R2, R1I, FAC0A, FAC0B, FAC0C, WWW,
+     *                         HWVKL, CCIK, CCJL
+C
+      ALLOCATE(WRK1(NTAB,NU,NU),WRK2(NTAB,NU,NU),WRK3(NTAB))
+C
+      PI=ACOS(-1.0D+00)
+      FPI=4.0D+00*PI
+C
+C     SET UP INTERATOMIC DISTANCES
+C
+      IATM = (IXYZ-1)/3 + 1
+      IN   = IXYZ - 3*(IATM-1)
+      JATM = (JXYZ-1)/3 + 1
+      JN   = JXYZ - 3*(JATM-1) 
+
+      IF(IATM == JATM) THEN
+        WRK1 = 0.0D+00
+        DO JU=1,NU
+          IF(JU /= IATM) THEN
+            DXYZ(1) = C(1,IATM) - C(1,JU)
+            DXYZ(2) = C(2,IATM) - C(2,JU)
+            DXYZ(3) = C(3,IATM) - C(3,JU)
+
+            R2   = DXYZ(1)*DXYZ(1)+DXYZ(2)*DXYZ(2)+DXYZ(3)*DXYZ(3)
+            R1   = SQRT(R2)
+            R1I  = 1.0D+00/R1
+            FAC0A= DXYZ(IN)*DXYZ(JN)/R2
+            FAC0B= 0.0D+00
+            IF(IN == JN) FAC0B = R1I
+            FAC0C= DXYZ(IN)*DXYZ(JN)/(R2*R1)
+
+            DO K=1,NTAB
+              RK = MAX(RKTAB(K),1.0D-30)
+              FAC1 =         COS(RK*R1)*R1I
+              FAC2 =         SIN(RK*R1)*R1I*R1I/RK
+              FAC3 =         SIN(RK*R1)*R1I*RK
+              FAC4 = 2.0D+00*COS(RK*R1)*R1I*R1I
+              FAC5 = 2.0D+00*SIN(RK*R1)*R1I*R1I*R1I/RK
+
+              IF(RK < 1.0D-10) THEN
+                FAC2 = R1I
+                FAC5 = 2.0D+00*R1I*R1I
+              ENDIF
+
+              VAL =-FAC0A*(FAC3+FAC4-FAC5) 
+     *             +FAC0B*(FAC1-FAC2)
+     *             -FAC0C*(FAC1-FAC2)
+              WRK1(K,JU,IATM) = VAL
+              WRK1(K,IATM,JU) = VAL
+            ENDDO
+          ENDIF
+        ENDDO
+
+      ELSE
+        DXYZ(1) = C(1,IATM) - C(1,JATM)
+        DXYZ(2) = C(2,IATM) - C(2,JATM)
+        DXYZ(3) = C(3,IATM) - C(3,JATM)
+
+        R2   = DXYZ(1)*DXYZ(1)+DXYZ(2)*DXYZ(2)+DXYZ(3)*DXYZ(3)
+        R1   = SQRT(R2)
+        R1I  = 1.0D+00/R1
+        FAC0A= DXYZ(IN)*DXYZ(JN)/R2
+        FAC0B= 0.0D+00
+        IF(IN == JN) FAC0B = R1I 
+        FAC0C= DXYZ(IN)*DXYZ(JN)/(R2*R1)
+
+        WRK1 = 0.0D+00
+        DO K=1,NTAB
+          RK = MAX(RKTAB(K),1.0D-30)
+          FAC1 =         COS(RK*R1)*R1I
+          FAC2 =         SIN(RK*R1)*R1I*R1I/RK
+          FAC3 =         SIN(RK*R1)*R1I*RK
+          FAC4 = 2.0D+00*COS(RK*R1)*R1I*R1I
+          FAC5 = 2.0D+00*SIN(RK*R1)*R1I*R1I*R1I/RK
+
+          IF(RK < 1.0D-10) THEN
+            FAC2 = R1I
+            FAC5 = 2.0D+00*R1I*R1I
+          ENDIF
+
+          VAL = FAC0A*(FAC3+FAC4-FAC5) 
+     *         -FAC0B*(FAC1-FAC2)
+     *         +FAC0C*(FAC1-FAC2)
+          WRK1(K,IATM,JATM) = VAL
+          WRK1(K,JATM,IATM) = VAL
+        ENDDO
+      ENDIF
+C
+      WRK2=0.0D+00
+      DO IU=1,NU
+        DO JU=1,NU
+          DO KV=1,NV
+            DO LV=1,NV
+              DO IGRID=1,NTAB
+                HWVKL=HWV(IGRID,KV,LV)
+                CCIK= CSB(IGRID,IU,KV)+FQLK(IGRID,IU,KV)
+                CCJL=(CSB(IGRID,JU,LV)+FQLK(IGRID,JU,LV))*DENV(LV)
+                WRK2(IGRID,JU,IU)=WRK2(IGRID,JU,IU)+CCIK*HWVKL*CCJL
+              ENDDO
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDDO
+C
+C
+C
+      PFACT=-0.5D+00*FPI/BETA/((2.0D+00*PI)**3)
+C
+      WRK3 = 0.0D+00
+      DO I=1,NU
+        DO J=1,NU
+          DO K=1,NTAB
+            RK=RKTAB(K)
+            WRK3(K)=WRK3(K) + RK*RK*WRK1(K,J,I)*WRK2(K,J,I)
+          ENDDO
+        ENDDO
+      ENDDO
+      CALL RSM_SIMP(NTAB,RKTAB,RKMX_SYMP,WRK3,WWW)
+
+      EHTMP = WWW*PFACT
+
+      DEALLOCATE(WRK1,WRK2,WRK3)
+C
+      RETURN
+      END
+C*MODULE RSM_CPRSM  *DECK RSM_CPTERM3
+C>
+C>    @brief   compute the first derivative of intramolecular correlation
+C>             function times first derivative of direct correlation 
+C>             function with respect to the coordinates
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IXYZ: index of the atomic coordinate for the derivative
+C>             CSB:  the short range part of direct correlation function
+C>             FQLK: the long range of electrostatic potential in reciprocal
+C>                   space
+C>             DC  : the first derivative of direct correlation function
+C>             EHTMP: the last term in the 3rd line of eq 16 in JCP, 155, 204102 (2021)
+C>
+      SUBROUTINE RSM_CPTERM3(IXYZ,CSB,FQLK,DC,EHTMP)
+C
+      USE RISM_MOD, ONLY : NU, NV, NTAB, BETA, DENV, RKMX_SYMP, RKTAB, 
+     *                     HWV
+      USE RSMSED,   ONLY : C
+C
+      IMPLICIT NONE
+C
+      INTEGER,INTENT(IN   ) :: IXYZ
+      DOUBLE PRECISION, INTENT(IN   ) :: CSB(NTAB,NU,*),FQLK(NTAB,NU,*),
+     *                                   DC(NTAB,NU,*)
+      DOUBLE PRECISION, INTENT(  OUT) :: EHTMP
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: WRK1(:,:,:),WRK2(:,:,:),WRK3(:)
+C
+      INTEGER               :: IU, JU, KV, LV, K, IATOM, JXYZ
+      DOUBLE PRECISION      :: PI, FPI, DXYZ(3), R1, R1I, FAC0, RK, 
+     *                         FAC1, FAC2, VAL, CCIK, CCJL, HWVKL,
+     *                         PFACT, WWW
+C
+      ALLOCATE(WRK1(NTAB,NU,NU),WRK2(NTAB,NU,NU),WRK3(NTAB))
+C
+      PI=ACOS(-1.0D+00)
+      FPI=4.0D+00*PI
+C
+      IATOM = (IXYZ-1)/3 + 1
+      JXYZ  = IXYZ - 3*(IATOM-1)
+
+      WRK1  = 0.0D+00
+      DO JU=1,NU
+        IF(JU /= IATOM) THEN
+          DXYZ(1) = C(1,IATOM) - C(1,JU)
+          DXYZ(2) = C(2,IATOM) - C(2,JU)
+          DXYZ(3) = C(3,IATOM) - C(3,JU)
+
+          R1   = SQRT(DXYZ(1)*DXYZ(1)+DXYZ(2)*DXYZ(2)+DXYZ(3)*DXYZ(3))
+          R1I  = 1.0D+00/R1
+          FAC0 = DXYZ(JXYZ)/R1
+          DO K=1,NTAB
+            RK = MAX(RKTAB(K),1.0D-30)
+            FAC1 = COS(RK*R1)*R1I
+            FAC2 = SIN(RK*R1)*R1I*R1I/RK
+            IF(RK < 1.0D-10) FAC2 = R1I
+
+            VAL = FAC0*(FAC1-FAC2)
+            WRK1(K,IATOM,JU) = VAL
+            WRK1(K,JU,IATOM) = VAL
+          ENDDO
+        ENDIF
+      ENDDO
+C
+C     PREPARE WRK2
+C
+      WRK2 = 0.0D+00
+      DO IU=1,NU
+        DO JU=1,NU
+          DO KV=1,NV
+            DO LV=1,NV
+              DO K=1,NTAB
+                HWVKL=HWV(K,KV,LV)
+                CCIK=DC(K,IU,KV)
+                CCJL=CSB(K,JU,LV)+FQLK(K,JU,LV)
+                WRK2(K,IU,JU)=WRK2(K,IU,JU)+CCIK*HWVKL*CCJL*DENV(LV)
+
+                CCIK=CSB(K,IU,KV)+FQLK(K,IU,KV)
+                CCJL=DC(K,JU,LV)
+                WRK2(K,IU,JU)=WRK2(K,IU,JU)+CCIK*HWVKL*CCJL*DENV(LV)
+              ENDDO
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDDO
+C
+      PFACT=-0.5D+00*FPI/BETA/((2.0D+00*PI)**3)
+C
+      WRK3 = 0.0D+00
+      DO JU=1,NU
+        DO IU=1,NU
+          DO K=1,NTAB
+            RK = RKTAB(K)
+
+            WRK3(K) = WRK3(K) + RK*RK*WRK1(K,IU,JU)*WRK2(K,IU,JU)
+          ENDDO
+        ENDDO
+      ENDDO
+
+      CALL RSM_SIMP(NTAB,RKTAB,RKMX_SYMP,WRK3,WWW)
+
+      EHTMP = PFACT*WWW
+C
+      DEALLOCATE(WRK1,WRK2,WRK3)
+C
+      RETURN
+      END
+
+

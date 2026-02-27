@@ -1,0 +1,493 @@
+C*MODULE RSM_GMS_TD  *DECK RSM_GETEDAT_TD
+C>
+C>    @brief   computed TD-DFT energy of target state  
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_GETEDAT_TD
+C
+      use mx_limits, only: mxatm, mxrt
+
+      USE ABSMOD,   ONLY : NQMT0A
+      USE RISM_IO,  ONLY : IW
+      USE RISM_MOD, ONLY : MASWRK, EUV_E8, EUV_E2, EUU, FRISM, E0
+      USE RSMSED,   ONLY : IEQ, IDCORR, IZINC
+C
+      IMPLICIT NONE
+C
+      INTEGER :: NAT, ICH, MUL, NUM, NQMT, NE, NA, NB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      DOUBLE PRECISION :: ENUCR,EELCT,ETOT,SZ,SZZ,ECORE,ESCF,EERD,E1_G, 
+     *                    E2_G,VEN,VEE,EPOT,EKIN,ESTATE,STATN,EDFT,EDISP
+      COMMON /ENRGYS/ ENUCR,EELCT,ETOT,SZ,SZZ,ECORE,ESCF,EERD,E1_G,E2_G,
+     *                VEN,VEE,EPOT,EKIN,ESTATE(MXRT),STATN,EDFT(2),EDISP
+
+      INTEGER :: IR, IW_GMS, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW_GMS,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      DOUBLE PRECISION :: ENERGY, EG
+      COMMON /FUNCT / ENERGY,EG(3*MXATM)
+
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      INTEGER :: MPLEVL, MPCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      DOUBLE PRECISION :: EXCITE, SPNFLP, UHF
+      DATA EXCITE,SPNFLP/8HEXCITE  ,8HSPNFLP  /
+      DATA UHF  /8HUHF     /
+C
+      INTEGER             :: L2, LMX
+ 
+      DOUBLE PRECISION              :: VINT0, VINT1, E1, G1
+      DOUBLE PRECISION, ALLOCATABLE :: DA(:), WRK(:)
+C
+C     OUTPUT:
+C
+C     IEQ == 0    Delta G[E] => ETOT
+C         == 1    Delta G[G] => ESCF
+C         == 2    
+C
+      L2  = NUM*(NUM+1)/2
+      LMX = MAX(NUM*NUM+NUM,NQMT0A+1)
+      ALLOCATE(DA(L2),WRK(LMX))
+
+      IF(IDCORR == 1) THEN
+        IF(IEQ == 2) THEN
+C
+C         GET EUV_E2
+C
+          IF(MASWRK) THEN
+            WRITE(IW,*) ''
+            WRITE(IW,'(4X,A29)') '-----------------------------'
+            WRITE(IW,'(4X,A29)') ' cSED CHARGES @ EXCITED STATE'
+            WRITE(IW,'(4X,A29)') '-----------------------------'
+            WRITE(IW,*) ''
+          ENDIF
+          IF(SCFTYP == UHF) THEN
+            CALL DAREAD(IDAF,IODA,WRK,2*L2,308,0)
+            CALL VADD(WRK(1),1,WRK(1+L2),1,DA,1,L2)
+          ELSE
+            CALL DAREAD(IDAF,IODA,DA,L2,308,0)
+          ENDIF
+          CALL RSM_EUVEQ8(DA,VINT0)
+
+          CALL RSM_GETDEN(1,NUM,DA,WRK)
+          CALL RSM_EUVEQ2(DA,EUV_E2)
+
+          EUU    = ETOT - 0.5D+00*(EUV_E8-VINT0) - FRISM
+
+        ELSE
+C
+C         ENERGY @ S0
+C
+          IF(MASWRK) THEN
+            WRITE(IW,*) ''
+            WRITE(IW,'(4X,A29)') '-----------------------------' 
+            WRITE(IW,'(4X,A29)') ' cSED CHARGES @ GROUND STATE '
+            WRITE(IW,'(4X,A29)') '-----------------------------'
+            WRITE(IW,*) ''
+          ENDIF
+
+          IF(SCFTYP == UHF) THEN
+            CALL DAREAD(IDAF,IODA,WRK,2*L2,308,0)
+            CALL VADD(WRK(1),1,WRK(1+L2),1,DA,1,L2)
+          ELSE
+            CALL DAREAD(IDAF,IODA,DA,L2,308,0)
+          ENDIF
+          CALL RSM_EUVEQ2(DA,VINT1)  !   DA: GROUND STATE DENSITY
+C
+C         FREE ENERGY @ EXCITED STATE
+C
+          CALL RSM_EUVEQ8(DA,VINT0)
+ 
+          E0     = ESCF + 0.5D+00*(EUV_E8-VINT0) + VINT1 - EUV_E2
+          EUU    = ETOT - 0.5D+00*(EUV_E8-VINT0) - FRISM
+          ETOT   = EUU + FRISM
+          ENERGY = ETOT
+        ENDIF
+      ELSE
+        call abrt
+        IF(IEQ == 0) THEN
+          CALL ABRT
+        ELSE
+          E1   = ETOT
+          G1   = ESCF
+!         EABS = ETOT - ESCF
+        ENDIF
+      ENDIF
+C
+      DEALLOCATE(DA,WRK)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_TD  *DECK RSM_DENTD_CT
+C>
+C>    @brief   computed TD-DFT density without Z-vector contribution
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   PA: density matrix
+C>             WRK: working array
+C> 
+
+      SUBROUTINE RSM_DENTD_CT(PA,WRK)
+
+      use mx_limits, only : mxatm, mxgrid
+
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(INOUT) :: PA(*), WRK(*)
+C
+      INTEGER :: NDFTFG, NRAD, NTHE, NPHI, NRAD0, NTHE0, NPHI0,
+     *           NANGPT, NANGPT0, JANS
+      DOUBLE PRECISION :: DFTTHR, DFTGTHR, SWOFF, SW0, BSLRD
+      LOGICAL :: SG1
+      COMMON /DFGRID/ DFTTHR,DFTGTHR,SWOFF,SW0,BSLRD(137),NDFTFG,
+     *                NRAD,NTHE,NPHI,NRAD0,NTHE0,NPHI0,
+     *                NANGPT(MXGRID),NANGPT0(MXGRID),SG1,JANS
+
+      DOUBLE PRECISION :: X
+      COMMON /FMCOM / X(1)
+
+      INTEGER :: NAT, ICH, MUL, NUM, NQMT, NE, NA, NB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      INTEGER :: JANST, NRADT, NTHET, NPHIT, NLEBT, NSTAT, NTRIAL,
+     *           MAXVEC, NTHST, IRECTD, ITDFG, ITDPRP, NONEQR, MODTD
+      DOUBLE PRECISION :: CNVTOL, PFREQ
+      LOGICAL :: TRIPLET, SG1T, TAMMD, TPA, ALPHKWD, BETAKWD
+      COMMON /INFOTD/ CNVTOL,PFREQ(2),MODTD,
+     *                JANST,NRADT,NTHET,NPHIT,NLEBT,
+     *                NSTAT,NTRIAL,MAXVEC,NTHST,IRECTD,ITDFG,ITDPRP,
+     *                TRIPLET,SG1T,NONEQR,TAMMD,TPA,ALPHKWD,BETAKWD
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      LOGICAL :: PACK2E
+      INTEGER :: NINTMX, NHEX, NTUPL, INTTYP, IGRDTYP
+      COMMON /INTFIL/ NINTMX,NHEX,NTUPL,PACK2E,INTTYP,IGRDTYP
+
+      LOGICAL :: GOPARR,DSKWRK,MASWRK
+      INTEGER :: ME, MASTER, NPROC, IBTYP, IPTIM
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+
+      INTEGER :: LABSIZ
+      COMMON /PCKLAB/ LABSIZ
+
+      INTEGER :: NEVALS, NGLEVL, NHLEVL
+      DOUBLE PRECISION :: RUNTYP, EXETYP
+      COMMON /RUNOPT/ RUNTYP,EXETYP,NEVALS,NGLEVL,NHLEVL
+C
+      DOUBLE PRECISION, PARAMETER :: ZERO=0.0D+00, ONE=1.0D+00
+      DOUBLE PRECISION            :: CHECK
+      DATA CHECK/8HCHECK   /
+C
+      INTEGER :: I, L0, L1, L2, L3, L7, LX, NOCC, NVIR, LOADFM, ITF,
+     *           I10, I20, I30, I40, I50, I60, I70, I80, I90, I100, 
+     *           I110, LAST, NEEDRPA, NEEDMNG, NEEDMX
+C
+      L0=NINTMX
+      L1= NUM
+      L2=(NUM*(NUM+1))/2
+      L3= NUM* NUM
+      LX=NQMT
+      NOCC=NA
+      NVIR=LX-NOCC
+      L7=NOCC*NVIR
+C
+C     --- MEMORY ALLOCATION
+C
+      CALL VALFM(LOADFM)
+      I10=LOADFM+1
+C     I10:TA(L3)OR PA(L3)
+      I20=I10+L3
+C     I20:V1(L7)
+      I30=I20+L7
+C     I30:V2(L7)
+      I40=I30+L7
+C     I40:GXC(L2)
+      I50=I40+L2
+C     I50:FXCV(L2)
+      I60=I50+L2
+C     I60:FXCT(L2)
+      I70=I60+L2
+C     I70:R(L7) OR Z(L7)
+      I80=I70+L7
+C     I80:QAI(L7)
+      I90=I80+L7
+C     I90:TEMP
+      I100=I90+L3
+C     I100:MO(L3)
+      I110=I100+L3
+C     I110:E(LX)
+      LAST=I110+LX
+      NEEDRPA=LAST-I10
+      CALL GETFM(NEEDRPA)
+C
+C     ---- READ MO
+C
+      CALL DAREAD(IDAF,IODA,X(I100),L1*LX,15,0)
+C
+C     ---- CALCULATE TA(L1,L1)
+C
+      CALL DAREAD(IDAF,IODA,X(I20),L7,IRECTD,0)
+      CALL DAREAD(IDAF,IODA,X(I30),L7,IRECTD+1,0)
+C
+      IF (TAMMD) THEN
+         ITF = 1
+      ELSE
+         ITF = 0
+      ENDIF
+      CALL TCONST(X(I10),X(I20),X(I30),LX,NOCC,ITF)
+C
+      CALL DGEMM('N','N',L1,LX,LX,ONE,X(I100),L1,X(I10),LX,ZERO,
+     *           X(I90),L1)
+      CALL DGEMM('N','T',L1,L1,LX,ONE,X(I90),L1,X(I100),L1,ZERO,
+     *           X(I10),L1)
+C
+C     ---- CALCULATE GXC(L2),FXCV(L2),FXCT(L2):GRID CALCULATION
+C
+   50 CONTINUE
+      NEEDMX =  NEEDRPA
+C
+      ITF = 0
+C
+C     ---- R(L7)
+C
+      CALL RMNG(X(I70),X(I80),X(I40),X(I50),X(I60),X(I10),X(I20),
+     *          X(I30),X(I100),NOCC,NVIR,L0,L1,L2,L3,L7,LX,
+     *          LABSIZ,IRECTD,NEEDMNG,ITF)
+      NEEDMX = MAX(NEEDMX,NEEDMNG + NEEDRPA)
+C
+C     GET DEN
+C
+      CALL TDPCMDEN(WRK,X(I10),L1)
+
+      DO I=1,L2
+        PA(I) = PA(I) + WRK(I)
+      ENDDO
+C
+      CALL RETFM(NEEDRPA)
+      RETURN
+ 9010 FORMAT(1X,'MAXIMUM MEMORY DURING TDDFT RESPONSES=',I10,' WORDS.')
+      END
+C*MODULE RSM_GMS_TD  *DECK RSM_GRDCHG
+C>
+C>    @brief   change the dft grid size
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_GRDCHG
+
+      use mx_limits, only : mxgrid
+
+      IMPLICIT NONE
+C-----GAMESS
+      INTEGER :: NDFTFG, NRAD, NTHE, NPHI, NRAD0, NTHE0, NPHI0,
+     *           NANGPT, NANGPT0, JANS
+      DOUBLE PRECISION :: DFTTHR, DFTGTHR, SWOFF, SW0, BSLRD
+      LOGICAL :: SG1
+      COMMON /DFGRID/ DFTTHR,DFTGTHR,SWOFF,SW0,BSLRD(137),NDFTFG,
+     *                NRAD,NTHE,NPHI,NRAD0,NTHE0,NPHI0,
+     *                NANGPT(MXGRID),NANGPT0(MXGRID),SG1,JANS
+
+      INTEGER :: NLEB, NLEB0
+      COMMON /DFLEB/  NLEB(MXGRID),NLEB0(MXGRID)
+
+      INTEGER :: MAXIT, MCONV, NPUNCH, NPREO
+      DOUBLE PRECISION :: CONVHF
+      COMMON /SCFOPT/ CONVHF,MAXIT,MCONV,NPUNCH,NPREO(4)
+C
+      IF(NLEB(1).NE.0) THEN
+         NRAD0    = NRAD
+         NLEB0(1) = NLEB(1)
+         SWOFF = 0
+      ELSE
+         NRAD0 = NRAD
+         NTHE0 = NTHE
+         NPHI0 = NPHI
+         SWOFF = 0
+      ENDIF
+C
+C     TURN OFF ALL OPTIONS
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_TD  *DECK RSM_SVHFDEN
+C>
+C>    @brief   save HF density
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_SVHFDEN
+
+      use mx_limits, only : mxatm
+
+      IMPLICIT NONE
+C-----GAMESS
+      INTEGER :: NAT, ICH, MUL, NUM, NQMT, NE, NA, NB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      INTEGER :: MPLEVL, MPCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      DOUBLE PRECISION :: UHF
+      DATA UHF  /8HUHF     /
+C
+      INTEGER             :: L2
+
+      DOUBLE PRECISION, ALLOCATABLE :: WRK(:)
+
+      L2 = NUM*(NUM+1)/2
+      ALLOCATE(WRK(2*L2))
+
+      IF(SCFTYP == UHF) THEN
+        CALL DAREAD(IDAF,IODA,WRK(1   ),L2, 16,0)
+        CALL DAREAD(IDAF,IODA,WRK(1+L2),L2, 20,0)
+
+        CALL DAWRIT(IDAF,IODA,WRK,L2*2,308,0)
+      ELSE
+        CALL DAREAD(IDAF,IODA,WRK,L2, 16,0)
+        CALL DAWRIT(IDAF,IODA,WRK,L2,308,0)
+      ENDIF
+
+      DEALLOCATE(WRK)
+
+      RETURN
+      END
+C*MODULE RSM_GMS_TD  *DECK RSM_GETDENCORR
+C>
+C>    @brief   get density correction p
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   L1: the number of AOs
+C>             P: density correction
+C>
+      SUBROUTINE RSM_GETDENCORR(L1,P)
+
+      USE RSMSED,   ONLY : IZINC
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: L1
+      DOUBLE PRECISION, INTENT(  OUT) :: P(L1,L1)
+C
+      INTEGER :: JANST, NRADT, NTHET, NPHIT, NLEBT, NSTAT, NTRIAL,
+     *           MAXVEC, NTHST, IRECTD, ITDFG, ITDPRP, NONEQR, MODTD
+      DOUBLE PRECISION :: CNVTOL, PFREQ
+      LOGICAL :: TRIPLET, SG1T, TAMMD, TPA, ALPHKWD, BETAKWD
+      COMMON /INFOTD/ CNVTOL,PFREQ(2),MODTD,
+     *                JANST,NRADT,NTHET,NPHIT,NLEBT,
+     *                NSTAT,NTRIAL,MAXVEC,NTHST,IRECTD,ITDFG,ITDPRP,
+     *                TRIPLET,SG1T,NONEQR,TAMMD,TPA,ALPHKWD,BETAKWD
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+C
+      INTEGER             :: L2, I, J, IJ
+
+      DOUBLE PRECISION, ALLOCATABLE :: PA(:), WRK(:)
+C
+      L2 = L1*(L1+1)/2
+      ALLOCATE(PA(L2),WRK(L2))     
+C
+C     -- READ DENSITY CORRECTION P
+C     NOTE THAT THIS IS A SQUARE, NON-SYMMETRIC QUANTITY.
+C
+      IF(IZINC == 1) THEN
+        CALL DAREAD(IDAF,IODA,P,L1*L1,IRECTD+4,0)
+      ELSE
+        PA = 0.0D+00
+        CALL RSM_DENTD_CT(PA,WRK)
+
+        IJ = 0
+        DO I=1,L1
+          DO J=1,I
+            IJ = IJ + 1
+
+            P(J,I) = PA(IJ)
+            P(I,J) = PA(IJ)
+          ENDDO
+        ENDDO
+      ENDIF
+
+      DEALLOCATE(PA,WRK)
+
+      END SUBROUTINE
+C*MODULE RSM_GMS_TD  *DECK RSM_PUTDENCORR
+C>
+C>    @brief   save density correction p
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   L1: the number of AOs
+C>
+      SUBROUTINE RSM_PUTDENCORR(L1)
+C
+      USE RISM_MOD, ONLY : MASWRK, GOPARR, MASTER
+C
+      IMPLICIT NONE
+ 
+      INTEGER, INTENT(IN   ) :: L1
+C
+      INTEGER :: JANST, NRADT, NTHET, NPHIT, NLEBT, NSTAT, NTRIAL,
+     *           MAXVEC, NTHST, IRECTD, ITDFG, ITDPRP, NONEQR, MODTD
+      DOUBLE PRECISION :: CNVTOL, PFREQ
+      LOGICAL :: TRIPLET, SG1T, TAMMD, TPA, ALPHKWD, BETAKWD
+      COMMON /INFOTD/ CNVTOL,PFREQ(2),MODTD,
+     *                JANST,NRADT,NTHET,NPHIT,NLEBT,
+     *                NSTAT,NTRIAL,MAXVEC,NTHST,IRECTD,ITDFG,ITDPRP,
+     *                TRIPLET,SG1T,NONEQR,TAMMD,TPA,ALPHKWD,BETAKWD
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+C
+      INTEGER             :: L3, I, J, K, K5, KM, IEOF
+ 
+      DOUBLE PRECISION, ALLOCATABLE :: P(:)
+C
+      L3 = L1*L1
+      ALLOCATE(P(L3))
+C
+C     READ
+C
+      CALL SEQREW(IR)
+      CALL FNDGRP(IR,' $PCORR ',IEOF)
+
+      IF(MASWRK) THEN
+        K5 = L3/5
+        KM = L3 - 5*K5
+        K = 0
+        DO I=1,K5
+          READ(IR,'(1X,5(1PE15.8))') (P(K+J),J=1,5)
+          K = K + 5
+        ENDDO
+        IF(KM /= 0) READ(IR,'(1X,5(1PE15.8))') (P(K+J),J=1,KM)
+      ENDIF
+
+      IF (GOPARR) CALL RSM_BCAST(919,'F',P,L3,MASTER)
+C
+C     -- READ DENSITY CORRECTION P
+C     NOTE THAT THIS IS A SQUARE, NON-SYMMETRIC QUANTITY.
+C
+      CALL DAWRIT(IDAF,IODA,P,L3,IRECTD+4,0)
+C
+      DEALLOCATE(P)
+C
+      END SUBROUTINE
+

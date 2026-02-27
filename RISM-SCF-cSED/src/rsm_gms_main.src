@@ -1,0 +1,1852 @@
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_STRT1
+C>
+C>    @brief   store the parameters that are independent of geometries 
+C>             for RISM-SCF calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_SCF_STRT1
+
+      USE RSMSED,    ONLY : IRISM, RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1,
+     *                      RSM_SCF_PUTPAR
+      USE RISM_IO,   ONLY : IRSSQF, RSM_PUTIO
+      USE RSM_BSMOD, ONLY : RSM_SCF_SETBS, RSM_SCF_CLOSEBS
+
+      IMPLICIT NONE
+C
+C     CHECK RISM CALCULATION
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(1)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_GETDAT0
+      IF(IRISM /= 0) THEN
+        CALL RSM_PUTIO
+        CALL RSM_SCF_PUTPAR
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+C
+C     GET DATA FROM GAMESS
+C
+      CALL RSM_GETDAT1
+C
+C     SET MODULE DATA
+C
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SCF_SETBS
+C
+C     PREPARE IMPORTANT DATA FOR RISM
+C
+      CALL RSM_STRT
+C
+C     INPUT CHECK
+C
+      CALL RSM_INPCHK
+C
+C     IF WE DON'T USE IZINC, WE CAN REMOVE THE NEXT LINE.
+C
+      CALL RSM_OLDRSM_TD
+C
+C     CLOSE IO MODULE DATA
+C
+      CALL RSM_PUTIO
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEBS
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_STRT2
+C>
+C>    @brief   store the parameters (ex. coordinates) for RISM-SCF calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_SCF_STRT2
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, RSM_SCF_SETPAR, RSM_SCF_SETINF1,
+     *                     RSM_SCF_SETINF2, RSM_SCF_PUTPAR,
+     *                     RSM_SCF_CLOSEINF1,
+     *                     RSM_SCF_CLOSEINF2, NSERCH, ITER_RSMTD
+      USE RISM_MOD, ONLY : RSM_SETPAR, RSM_PUTENE
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RSM_BSMOD,ONLY : RSM_SCF_SETBS, RSM_SCF_CLOSEBS
+
+      IMPLICIT NONE
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+C
+C     SET MODULE DATA
+C
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETPAR
+      CALL RSM_SETABS
+      CALL RSM_SCF_SETBS
+C
+C     GET DATA FROM GAMESS
+C
+      CALL RSM_GETDAT2
+      CALL RSM_SCF_SETINF2
+C
+C     CALCULATE MATRICES FOR RISM CALCULATION
+C
+      IF(ITER_RSMTD == 0) NSERCH = NSERCH + 1
+C
+      CALL RSM_PRPMT
+C
+C     INITIALIZE TEMPORARY MATRICES
+C
+      CALL RSM_INITIALIZE
+C
+C     CLOSE MODULE DATA
+C
+!     CALL RSM_PUTENE    2022/3/25
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEINF2
+      CALL RSM_CLOSEABS
+      CALL RSM_SCF_CLOSEBS
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+C
+C     MODULES DEPENDS ON QM METHODS
+C
+CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_RHF
+C>
+C>    @brief   main subroutine for RISM-SCF calculation with RHF
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITER: SCF iteration cycle
+C>             DIFF: largest absolute change in the density matrix
+C>             FA: solvated Fock matrix
+C>             DA: density matrix
+C>
+      SUBROUTINE RSM_SCF_RHF(ITER,DIFF,FA,DA)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ITRRSM, NUM, NQMT, RSM_SCF_SETPAR,
+     *                     RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1,
+     *                     RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_PUTPAR
+      USE RISM_MOD, ONLY : IGRD_TYP, RSM_SETPAR, RSM_SETVAR, 
+     *                     RSM_PUTVAR, RSM_SETENE, RSM_PUTENE
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: ITER
+      DOUBLE PRECISION, INTENT(IN   ) :: DIFF, DA(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: FA(*)
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETABS
+      CALL RSM_SETENE
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+
+      CALL RSM_FCK1(ITER,DIFF,FA,DA)
+C
+C     CLOSE
+C
+      CALL RSM_PUTENE
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_UHF
+C>
+C>    @brief   main subroutine for RISM-SCF calculation with UHF
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITER: SCF iteration cycle
+C>             DIFF: largest absolute change in the density matrix
+C>             FA: solvated Fock matrix of alpha electron
+C>             FA: solvated Fock matrix of beta electron
+C>             DA: density matrix of alpha electron
+C>             DB: density matrix of beta electron
+C>             WRK: working array
+C>
+
+      SUBROUTINE RSM_SCF_UHF(ITER,DIFF,FA,FB,DA,DB,WRK)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ITRRSM, NUM, NQMT, RSM_SCF_SETPAR,
+     *                     RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1,
+     *                     RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_PUTPAR
+      USE RISM_MOD, ONLY : IGRD_TYP, RSM_SETPAR, RSM_SETVAR, 
+     *                     RSM_PUTVAR, RSM_SETENE, RSM_PUTENE
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: ITER
+      DOUBLE PRECISION, INTENT(IN   ) :: DIFF, DA(*), DB(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: FA(*), FB(*), WRK(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: FSOLV(:)
+C
+      INTEGER                :: I, L2
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETABS
+      CALL RSM_SETENE
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+C     MEMORY ALLOCATION
+C
+      L2 = NUM*(NUM+1)/2
+      ALLOCATE(FSOLV(L2))
+      FSOLV = 0.0D+00
+C
+      DO I=1,L2
+        WRK(I) = DA(I) + DB(I)
+      ENDDO
+      CALL RSM_FCK1(ITER,DIFF,FSOLV,WRK)
+C
+C     MODIFY FOCK
+C
+      DO I=1,L2
+        FA(I) = FA(I) + FSOLV(I)
+        FB(I) = FB(I) + FSOLV(I)
+      ENDDO
+C
+C     CLOSE
+C
+      CALL RSM_PUTENE
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+
+      DEALLOCATE(FSOLV)
+
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_CC
+C>
+C>    @brief   main subroutine for RISM-SCF calculation with CC
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITER: CC iteration cycle
+C>             NO: number of active & occupied mos
+C>             NU: number of active & virtual mos
+C>             IFC: number of chemical core orbitals
+C>             FH: Fock matrix for hole/hole block
+C>             FP: Fock matrix for particle/particle block
+C>             FPH: Fock matrix for hole/particle block
+C>             OEH: one-electron contribution (hole)
+C>             OEP: one-electron contribution (particle)
+C>             T1: T1 AMPS
+C>
+      SUBROUTINE RSM_SCF_CC(ITER,NO,NU,IFC,FH,FP,FPH,OEH,OEP,T1)
+
+      use mx_limits, only : mxatm
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ITRRSM, RSM_SCF_SETPAR,
+     *                     RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1,
+     *                     RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_PUTPAR
+      USE RISM_MOD, ONLY : IGRD_TYP, EUV_E8, RSM_SETPAR, RSM_SETVAR,
+     *                     RSM_PUTVAR, RSM_PUTENE, MASWRK
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: ITER, NO, NU, IFC
+      DOUBLE PRECISION, INTENT(INOUT) ::FH(*),FP(*),FPH(*),OEH(*),OEP(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: T1(*)
+C GAMESS
+      INTEGER :: NAT, ICH, MUL, NUM, NQMT, NE, NA, NB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+C
+      DOUBLE PRECISION, ALLOCATABLE :: DA(:),FA(:),VEC(:),FMO(:)
+      DOUBLE PRECISION              :: DIFF
+      INTEGER             :: L1, L2, M1, NSKIP, NOU
+C
+      DOUBLE PRECISION              :: TRACEP
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETABS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+C     MEMORY ALLOCATION
+C
+      L1 = NUM
+      L2 = NUM*(NUM+1)/2
+      M1 = NU+NO
+      ALLOCATE(DA(L2),FA(L2),VEC(L1*L1),FMO(M1*(M1+1)/2))
+C
+C     STORE VEC
+C
+      CALL DAREAD(IDAF,IODA,VEC,L1*L1,15,0)
+C
+      FA = 0.0D+00
+      DIFF = 0.0D+00
+      CALL RSM_DENCC(0,L1,NO,NU,IFC,VEC,DA)
+      CALL RSM_FCK1(ITER,DIFF,FA,DA)
+C
+C     FOCK(AO) -> FOCK(MO)  (DA IS USED FOR SCRATCH)
+C
+      NSKIP = IFC*L1
+      M1    = NU+NO
+      CALL TFTRI(FMO,FA,VEC(NSKIP+1),DA,M1,L1,L1)
+C
+C     MAKE FH, FP, FPH, OEH, and OEP
+C
+      CALL RSM_ADDFCKCC(MASWRK,NO,NU,FH,FP,FPH,OEH,OEP,FMO)
+C
+C     CALCULATE EUV(CC) (FA IS USED FOR SCRATCH)
+C
+      CALL RSM_DARE(FA,L2,15,0)
+      CALL RSM_DENCC(1,L1,NO,NU,IFC,VEC,DA)
+      EUV_E8 = TRACEP(DA,FA,L1)
+C
+      NOU = NO*NU
+      IF(MASWRK) CALL DCOPY(NOU,FPH,1,T1,1)
+C
+C     CLOSE
+C
+      CALL RSM_PUTENE
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+
+      DEALLOCATE(DA,FA,VEC,FMO)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_CI
+C>
+C>    @brief   main subroutine for RISM-SCF calculation with CI
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NRNFG: array of 10 switches controlling which steps of
+C>                    a CI computation are performed
+C>             NPFLG: array of 10 switches to produce debug printout
+C>
+      SUBROUTINE RSM_SCF_CI(NRNFG,NPFLG)
+
+      use mx_limits, only: mxatm, mxrt
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, RSM_SCF_SETPAR, RSM_SCF_PUTVAR, 
+     *                     RSM_SCF_PUTPAR, RSM_SCF_SETVAR,
+     *                     RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1
+      USE RISM_MOD, ONLY : IGRD_TYP, RSM_SETPAR, RSM_SETVAR,
+     *                     RSM_PUTVAR, RSM_PUTENE, EUV_E8, EUU, FRISM
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+C
+      INTEGER, INTENT(INOUT) :: NRNFG(10), NPFLG(10)
+C
+C     GAMESS
+C
+      INTEGER :: NAT, ICH, MUL, NUM, NQMT, NE, NA, NB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      DOUBLE PRECISION :: ENUCR,EELCT,ETOT,SZ,SZZ,ECORE,ESCF,EERD,E1,E2,
+     *                    VEN,VEE,EPOT,EKIN,ESTATE,STATN,EDFT,EDISP
+      COMMON /ENRGYS/ ENUCR,EELCT,ETOT,SZ,SZZ,ECORE,ESCF,EERD,E1,E2,
+     *                VEN,VEE,EPOT,EKIN,ESTATE(MXRT),STATN,EDFT(2),EDISP
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      INTEGER :: NPRINT, ITOL, ICUT, NORMF, NORMP, NOPK
+      COMMON /OUTPUT/ NPRINT,ITOL,ICUT,NORMF,NORMP,NOPK
+   
+      INTEGER :: ME, MASTER, NPROC, IBTYP, IPTIM
+      LOGICAL GOPARR,DSKWRK,MASWRK
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+C
+      DOUBLE PRECISION, ALLOCATABLE :: HORG(:), FA(:), DOLD(:), D(:)
+
+      INTEGER             :: L2, NPFLG5S, ITER, I
+      DOUBLE PRECISION    :: VAL, DMAX, DIFF
+C
+C     RISM PART
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETABS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+C     GAMESS PART
+C
+      L2 = NUM*(NUM+1)/2
+      ALLOCATE(HORG(L2),FA(L2),DOLD(L2),D(L2))
+C
+C     INITIALIZATION
+C
+      CALL DAREAD(IDAF,IODA,HORG,L2,11,0)
+      CALL VCLR(DOLD,1,L2) 
+C
+      NRNFG(5) = 1
+      NPFLG5S = NPFLG(5)
+      NPFLG(5)=-5
+      DIFF = 0.0D+00
+C
+C     START ITERATION
+C
+      DO ITER=2,100
+        CALL ALDECI(NRNFG,NPFLG)
+C
+C       GET DENSITY
+C
+        CALL DAREAD(IDAF,IODA,D,L2,16,0)
+C
+        CALL DCOPY(L2,HORG,1,FA,1)
+        CALL RSM_FCK1(ITER,DIFF,FA,D)
+C
+C       SAVE SOLVATED FOCK
+C
+        CALL DAWRIT(IDAF,IODA,FA,L2,11,0) 
+C
+C       CHECK CONVERGENCE
+C
+        DMAX = 0.0D+00
+        DO I=1,L2
+          VAL = ABS(D(I) - DOLD(I))
+
+          DOLD(I) = D(I)
+
+          DMAX=MAX(DMAX,VAL)
+        ENDDO
+C
+C       ENERGY
+C
+        EUU  = ETOT - EUV_E8
+        ETOT = EUU + FRISM
+
+        IF(DMAX < 2.0D-06) EXIT
+
+        IF(MASWRK) WRITE(*,'(A6,I8,E15.8)') ' DIFF=',ITER,DMAX
+
+      ENDDO
+C
+      NPFLG(5)=NPFLG5S
+C
+      DEALLOCATE(HORG,FA,DOLD,D)
+C
+      CALL RSM_PUTENE
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      END SUBROUTINE     
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_MCQDPT
+C>
+C>    @brief   main subroutine for RISM-SCF calculation with MCQDPT
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITYP: 0: input MOs are used, 1: canonical Fock MOs are used
+C>             LUNFT0: the number of doubly occupied orbitals
+C>             NDOUB: the number of doubly occupied orbitals
+C>             NMOACT: the number of active orbitals
+C>             NSTATE: the number of states
+C>             NSCF: total number of csfs
+C>             NMO: the number of molecular orbitals
+C>             MAXCSF: maximum length for one-particle coupling constant used
+C>             EVAL: energy of each state
+C>             AVECOE: average coefficient (not used)
+C>
+      SUBROUTINE RSM_SCF_MCQDPT(ITYP,LUNFT0,NDOUB,NMOACT,NSTATE,NCSF,
+     *                             NMO,MAXCSF,EVAL,AVECOE)
+
+      use mx_limits, only: mxatm, mxrt
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, RSM_SCF_SETPAR, RSM_SCF_PUTVAR,
+     *                     RSM_SCF_SETVAR, RSM_SCF_SETINF1, 
+     *                     RSM_SCF_CLOSEINF1,
+     *                     RSM_SCF_PUTPAR
+      USE RISM_MOD, ONLY : RSM_SETPAR, IROOT, RSM_SETENE, RSM_PUTENE, 
+     *                     EUU, FRISM
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: ITYP,LUNFT0,NDOUB,NMOACT,
+     *                                   NSTATE,NCSF,NMO,MAXCSF
+      DOUBLE PRECISION, INTENT(IN   ) :: AVECOE(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: EVAL(*) 
+C
+C     GAMESS
+C
+      INTEGER :: NAT, ICH, MUL, NUM, NQMT, NE, NA, NB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      INTEGER :: NPRINT,ITOL,ICUT,NORMF,NORMP,NOPK
+      COMMON /OUTPUT/ NPRINT,ITOL,ICUT,NORMF,NORMP,NOPK
+
+      INTEGER :: ME, MASTER, NPROC, IBTYP, IPTIM
+      LOGICAL :: GOPARR,DSKWRK,MASWRK
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+
+      INTEGER :: IDAF50,NAV50,IODA50     
+      COMMON /MQIOFI/ IDAF50,NAV50,IODA50(400)
+C
+      DOUBLE PRECISION, ALLOCATABLE :: FAO(:), PAO(:), CMO(:), FMO(:)
+
+      INTEGER             :: L1, L2, L3, L4, L5
+C
+C     RISM PART
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETABS
+      CALL RSM_SETPAR
+      CALL RSM_SCF_SETVAR
+      CALL RSM_SETENE
+C
+C     GAMESS PART
+C
+      L1 = NUM
+      L2 = NUM*(NUM+1)/2
+      L3 = NUM*NUM
+      L4 = NMO*NMO
+      L5 = NUM*NMO
+      ALLOCATE(FAO(L2),PAO(L3),CMO(L3),FMO(L4))
+C
+C
+C
+      IF(ITYP == 0) THEN
+        CALL MQDARE(IDAF50,IODA50,CMO,L5,7,0)
+      ELSE
+        CALL MQDARE(IDAF50,IODA50,CMO,L5,8,0)
+      ENDIF
+      CALL RSM_GETEDAT_MCPT(IROOT,L1,LUNFT0,NDOUB,NMOACT,NSTATE,NCSF,
+     *                      NMO,MAXCSF,PAO,CMO,FAO,FRISM,EVAL)
+
+      EUU = EVAL(IROOT) - FRISM
+C
+      DEALLOCATE(FAO,PAO,CMO,FMO)
+C
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_PUTENE
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLOSEABS
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      END SUBROUTINE     
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_MCSCF1
+C>
+C>    @brief   main subroutine for RISM-SCF calculation with MCSCF
+C>             (determine the memory size)
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   LOADFM: offset (ltop) to the highest position in memory currently used
+C>             LAST: last address of the required moemry
+C>             NEEDRSM: memory size required in RISM-SCF calculation
+C>             L2: (L1*L1+L1)/2, where L1 is the number of atomic orbitals
+C>             L3: L1*L1, where L1 is the number of atomic orbitals
+C>             LD: the highest position in memory used for density matrix
+C>             LH1: the highest position in memory used for Fock matrix
+C>             LC: the highest position in memory used for MO
+C>             MORBS: the number of active orbitals
+C>             MCORBS: the number of core orbitals
+C>
+      SUBROUTINE RSM_SCF_MCSCF1(LOADFM,LAST,NEEDRSM,L2,L3,LD,LH1,LC,
+     *                            MORBS,MCORBS)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ITRRSM, NUM, NQMT, RSM_SCF_SETPAR,
+     *                     RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1,
+     *                     RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_PUTPAR
+      USE RISM_MOD, ONLY : IGRD_TYP, RSM_SETPAR, RSM_SETVAR, 
+     *                     RSM_PUTVAR, RSM_PUTENE
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+C
+      INTEGER, INTENT(IN   ) :: LOADFM, L2, L3, MORBS, MCORBS
+      INTEGER, INTENT(  OUT) :: LD, LH1, LC, LAST, NEEDRSM
+C
+      DOUBLE PRECISION, ALLOCATABLE :: GIJ(:), FCVAO(:)
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM == 0) THEN
+        LD     = LAST
+        LH1    = LD     + L2
+        LC     = LH1    + L2
+        LAST   = LC     + L3
+
+        NEEDRSM = LAST-LOADFM-1
+        CALL GETFM(NEEDRSM)
+C
+      ENDIF
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_MCSCF2
+C>
+C>    @brief   main subroutine for RISM-SCF calculation with MCSCF
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MCDENAO: flag to prepare the denisty matrix in AO
+C>             ITER: SCF iteration cycle
+C>             DIFF: (not used)
+C>             FA: solvated Fock matrix
+C>             DA: density matrix
+C>
+      SUBROUTINE RSM_SCF_MCSCF2(MCDENAO,ITER,DIFF,FA,DA)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ITRRSM, NUM, NQMT, RSM_SCF_SETPAR,
+     *                     RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1,
+     *                     RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_PUTPAR
+      USE RISM_MOD, ONLY : IGRD_TYP, RSM_SETPAR, RSM_SETVAR, 
+     *                     RSM_PUTVAR, RSM_PUTENE, IROOT
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+
+      LOGICAL,          INTENT(  OUT) :: MCDENAO
+      INTEGER,          INTENT(IN   ) :: ITER
+      DOUBLE PRECISION, INTENT(IN   ) :: DA(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: DIFF, FA(*)
+C
+C     GAMESS
+C
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      INTEGER :: ME, MASTER, NPROC, IBTYP, IPTIM
+      LOGICAL :: GOPARR,DSKWRK,MASWRK
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+C
+      INTEGER :: L2, NSTATAVG, IDEGAVG
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETABS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+      DIFF = 0.0D+00
+C
+C
+C
+      L2 = NUM*(NUM+1)/2
+      IF(ITER == 1) THEN
+        CALL DAREAD(IDAF,IODA,FA,L2,11,0)
+        CALL DAWRIT(IDAF,IODA,FA,L2,87,0)
+C
+C       READ SOLVATED FOCK (IF THERE IS $SLVFCK)
+C
+        CALL RSM_RDSLVFCK(MASWRK,GOPARR,MASTER,NUM)
+C
+C       SKIP RSM_CALFCV
+C
+        NSTATAVG = 1
+      ELSE
+C
+C     IF STATE-AVERAGED MCSCF, WE USE DA(IROOT) FOR RISM CALCULATION
+C
+        CALL STAVGCHK(NSTATAVG,IDEGAVG) 
+        IF(NSTATAVG.GT.1) THEN
+          IF(MASWRK) THEN
+            WRITE(IW,*)           ''
+            WRITE(IW,'(10X,A34)') '----------------------------------'
+            WRITE(IW,'(10X,A34)') ' cSED CHARGES of THE TARGET STATE '
+            WRITE(IW,'(10X,A34)') '----------------------------------'
+          ENDIF
+          CALL RSM_DETDM2(IROOT,DA)
+        ELSE
+          CALL DAREAD(IDAF,IODA,DA,L2,16,0)
+        ENDIF
+C
+C     GET BARE HAMILTONIAN (GAMESS)
+C
+        CALL DAREAD(IDAF,IODA,FA,L2,87,0)
+C
+        CALL RSM_FCK1(ITER,DIFF,FA,DA)
+C
+C
+C
+        CALL DAWRIT(IDAF,IODA,FA,L2,11,0)
+      ENDIF
+C
+C     IF(NSTATAVG.GT.1), WE CALCULATE FCV
+C
+      IF(NSTATAVG > 1) CALL RSM_CALFCV(MASWRK,NUM,NQMT)
+C
+C     CLOSE
+C
+      MCDENAO = .TRUE.
+
+      CALL RSM_PUTENE
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_TD
+C>
+C>    @brief   main subroutine for RISM-SCF calculation with TD
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>
+      SUBROUTINE RSM_SCF_TD
+
+      use mx_limits, only: mxatm, mxrt
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ITDDFT, IZINC, RSM_SCF_SETPAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_PUTPAR, IEQ,
+     *                     ITDCONV, ITER_RSMTD, ETOT, ICONCL
+      USE RISM_MOD, ONLY : IREST, EDIFMX, IGRD_TYP, 
+     *                     RSM_SETPAR, RSM_SETVAR,
+     *                     RSM_PUTVAR, RSM_PUTENE
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+C
+C     GAMESS
+C
+      INTEGER :: NAT, ICH, MUL, NUM, NQMT, NE, NA, NB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      DOUBLE PRECISION ::ENUCR,EELCT,ETOT_GMS,SZ,SZZ,ECORE,ESCF,EERD,E1,
+     *                    E2,VEN,VEE,EPOT,EKIN,ESTATE,STATN,EDFT,EDISP
+      COMMON /ENRGYS/ ENUCR,EELCT,ETOT_GMS,SZ,SZZ,ECORE,ESCF,EERD,E1,E2,
+     *                VEN,VEE,EPOT,EKIN,ESTATE(MXRT),STATN,EDFT(2),EDISP
+
+      INTEGER :: JANST, NRADT, NTHET, NPHIT, NLEBT, NSTAT, NTRIAL,
+     *           MAXVEC, NTHST, IRECTD, ITDFG, ITDPRP, NONEQR, MODTD
+      DOUBLE PRECISION :: CNVTOL, PFREQ
+      LOGICAL :: TRIPLET, SG1T, TAMMD, TPA, ALPHKWD, BETAKWD
+      COMMON /INFOTD/ CNVTOL,PFREQ(2),MODTD,
+     *                JANST,NRADT,NTHET,NPHIT,NLEBT,
+     *                NSTAT,NTRIAL,MAXVEC,NTHST,IRECTD,ITDFG,ITDPRP,
+     *                TRIPLET,SG1T,NONEQR,TAMMD,TPA,ALPHKWD,BETAKWD
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      INTEGER :: NPRINT, ITOL, ICUT, NORMF, NORMP, NOPK
+      COMMON /OUTPUT/ NPRINT,ITOL,ICUT,NORMF,NORMP,NOPK
+
+      INTEGER :: ME, MASTER, NPROC, IBTYP, IPTIM
+      LOGICAL :: GOPARR,DSKWRK,MASWRK
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+
+      INTEGER :: MAXIT, MCONV, NPUNCH, NPREO
+      DOUBLE PRECISION :: CONVHF
+      COMMON /SCFOPT/ CONVHF,MAXIT,MCONV,NPUNCH,NPREO(4)
+C
+      INTEGER             :: ITER, I, L1, L2, NPRTSV, NPUNSV
+ 
+      DOUBLE PRECISION              :: EDIF1, EDIF2, E_OLD1, E_OLD2
+      DOUBLE PRECISION, ALLOCATABLE :: WRK1(:), WRK2(:)
+C
+C     RISM PART
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+
+      ITER_RSMTD = 0
+      ITDCONV    = 0
+C
+C     RESTART or IEQ == 2
+C
+!     IF(IRISM == 0 .and. ITDDFT /=0 .and. (IREST==1 .or. IEQ==2))THEN
+      IF(IRISM == 0 .and. ITDDFT /=0 .and. IREST==1) THEN
+        CALL RSM_PUTDENCORR(NUM)
+
+        ITER_RSMTD = 1
+        ITDCONV    = 1
+      ENDIF
+
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+
+      IF(IRISM /= 0 .or. ITDDFT == 0) RETURN
+!     IF(IRISM == 0 .and. ITDDFT /=0 .and. IEQ == 2) RETURN
+C
+C     GAMESS PART
+C
+      L1 = NUM
+      L2 = NUM*(NUM+1)/2
+      ALLOCATE(WRK1(L1*L1),WRK2(L1*L1))
+C
+      NPRTSV = NPRINT
+      NPUNSV = NPUNCH
+      NPRINT = -5
+      NPUNCH =  0
+C
+      E_OLD1 = 0.0D+00
+      E_OLD2 = 0.0D+00
+
+      IF(ITER_RSMTD > 0) E_OLD1 = ETOT
+C
+      DO ITER=1,100
+        CALL WFN
+C
+C       SAVE ENERGIES
+C 
+        EDIF1 = ABS(E_OLD1 - ETOT_GMS)
+        EDIF2 = ABS(E_OLD2 - E_OLD1)
+        E_OLD2 = E_OLD1
+        E_OLD1 = ETOT_GMS
+
+        IF(MASWRK) THEN
+          WRITE(IW,*) ''
+          WRITE(IW,'(10X,A39)')'---------------------------------------'
+          WRITE(IW,'(10X,A39)')'CHECK THE CONVERGENCE IN TD/RISM CYCLES'
+          WRITE(IW,'(10X,A39)')'---------------------------------------'
+          WRITE(IW,'(10X,A6,2F20.5)') ' EDIF=',EDIF1,EDIF2
+        ENDIF
+        EDIF1 = EDIF1*27.211D+00
+        EDIF2 = EDIF2*27.211D+00
+C
+C       STORE D(HF) INTO DAF16
+C
+        IF(IZINC == 1 .or. (IZINC == 0 .and. ITER >= 2)) THEN
+          CALL DAREAD(IDAF,IODA,WRK1,L2,308,0)
+          CALL DAWRIT(IDAF,IODA,WRK1,L2, 16,0)
+        ENDIF
+C
+C       STORE T+Z (CONICAL SERCH)
+C
+        IF(ICONCL == 1) THEN
+          IF(ITER == 1) THEN
+            CALL DAREAD(IDAF,IODA,WRK2,L1*L1,IRECTD+4,0)
+          ELSE
+            CALL DAREAD(IDAF,IODA,WRK1,L1*L1,IRECTD+4,0)
+
+            DO I=1,L1*L1
+              WRK2(I) = 0.2D+00*WRK1(I) + 0.8D+00*WRK2(I)
+            ENDDO
+            CALL DAWRIT(IDAF,IODA,WRK2,L1*L1,IRECTD+4,0)
+          ENDIF
+        ENDIF
+C 
+        IF(EDIF1 < EDIFMX .and. EDIF2 < EDIFMX) EXIT
+
+        CALL RSM_GRDCHG
+      ENDDO
+
+      NPRINT = NPRTSV
+      NPUNCH = NPUNSV
+C
+C     SAVE ETOT_GMS & ITDCONV
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+
+      ETOT       = ETOT_GMS
+      ITDCONV    = 1
+
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      DEALLOCATE(WRK1,WRK2)
+C
+      END SUBROUTINE     
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_TRNSTN
+C>
+C>    @brief   main subroutine for RISM-SCF calculation with 
+C>             transition moments calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>
+      SUBROUTINE RSM_SCF_TRNSTN
+
+      USE RISM_IO,  ONLY : RSM_SETIO
+      USE RSMSED,   ONLY : IRISM, NUM, RSM_SCF_SETPAR
+
+      IMPLICIT NONE
+C
+C     GAMESS
+C
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      INTEGER :: ME, MASTER, NPROC, IBTYP, IPTIM
+      LOGICAL :: GOPARR,DSKWRK,MASWRK
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+C
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        RETURN
+      ENDIF
+C
+C     READ SOLVATED FOCK (IF THERE IS $SLVFCK)
+C
+      CALL RSM_RDSLVFCK(MASWRK,GOPARR,MASTER,NUM)
+
+      CALL RSM_CLDA
+     
+      END SUBROUTINE
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFEND_HF
+C>
+C>    @brief   finalize RISM-SCF calculation with HF
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ETOT: free energy of the molecule
+C>             JOBTYP: job type
+C>
+      SUBROUTINE RSM_SCFEND_HF(ETOT,JOBTYP)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ICC, ITDDFT, RSM_SCF_SETPAR
+      USE RISM_MOD, ONLY : EUU, EUV_E8, RSM_SETENE, RSM_PUTENE, FRISM
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: JOBTYP
+      DOUBLE PRECISION, INTENT(INOUT) :: ETOT
+
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SETENE
+C
+C     JOBTYP = 0 : RHF
+C              1 : UHF
+C       
+!     IF(JOBTYP == 0) THEN
+        EUU  = ETOT - 0.5D+00*EUV_E8
+!     ENDIF
+
+      IF(ICC == 1) THEN
+        ETOT = EUU
+C
+C     SAVE FOCK(GAS)
+C
+        CALL RSM_PRPFCKGAS
+      ELSE
+        ETOT = EUU  + FRISM
+
+!       print *,'etot',euu,frism
+      ENDIF
+C
+C     SAVE DENSITY MATRIX
+C
+      IF(ITDDFT >= 1) THEN
+        CALL RSM_SVHFDEN
+      ENDIF
+C
+      CALL RSM_PUTENE
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFEND_CC
+C>
+C>    @brief   finalize RISM-SCF calculation with CC
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ENRG: correlation energy
+C>
+      SUBROUTINE RSM_SCFEND_CC(ENRG)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ICC, RSM_SCF_SETPAR
+      USE RISM_MOD, ONLY : EUU, EUV_E8, RSM_SETENE, RSM_PUTENE, FRISM
+
+      IMPLICIT NONE
+
+      DOUBLE PRECISION, INTENT(IN   ) :: ENRG
+
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SETENE
+C
+      EUU = EUU + ENRG - EUV_E8
+C
+      CALL RSM_PUTENE
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFEND_MP2
+C>
+C>    @brief   finalize RISM-SCF calculation with MP2
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ETOT: free energy of the molecule
+C>
+
+      SUBROUTINE RSM_SCFEND_MP2(ETOT)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ICC, RSM_SCF_SETPAR
+      USE RISM_MOD, ONLY : EUU, EUV_E8, RSM_SETENE, RSM_PUTENE, FRISM
+
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(IN   ) :: ETOT
+C
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      INTEGER :: MPLEVL, MPCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      DOUBLE PRECISION :: RMC
+      DATA RMC/8HMCSCF   /
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SETENE
+C       
+!     IF(SCFTYP == RMC) THEN
+!       EUU  = ETOT - FRISM
+!       ETOT = EUU  + FRISM
+!     ELSE
+        EUU  = ETOT - FRISM
+!     ENDIF
+C
+      CALL RSM_PUTENE
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFEND_TD
+C>
+C>    @brief   finalize RISM-SCF calculation with TD
+C>
+C>    @author  Daisuke Yokogawa
+C>
+
+      SUBROUTINE RSM_SCFEND_TD
+
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ICC, RSM_SCF_SETPAR, RSM_SCF_PUTPAR,
+     *                     ITER_RSMTD, RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1
+      USE RISM_MOD, ONLY : RSM_SETENE, RSM_PUTENE
+
+      IMPLICIT NONE
+
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETABS
+      CALL RSM_SETENE
+      
+      CALL RSM_GETEDAT_TD
+C
+      ITER_RSMTD = ITER_RSMTD + 1
+C
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTENE
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFEND_MCQDPT2
+C>
+C>    @brief   finalize RISM-SCF calculation with MCQDPT2
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NSTATE: the number of states
+C>             EMCQDPT2: energy of each state
+C>
+
+      SUBROUTINE RSM_SCFEND_MCQDPT2(NSTATE,EMCQDPT2)
+
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ICC, RSM_SCF_SETPAR, RSM_SCF_PUTPAR,
+     *                     RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1
+      USE RISM_MOD, ONLY : RSM_SETENE, RSM_PUTENE, ESTATE
+
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN   ) :: NSTATE
+      REAL*8,  INTENT(IN   ) :: EMCQDPT2(*)
+
+      INTEGER                :: I
+
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETABS
+      CALL RSM_SETENE
+C
+      ESTATE = 1.0D+30
+      DO I=1,MIN(10,NSTATE)
+        ESTATE(I) = EMCQDPT2(I)
+      ENDDO
+C
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTENE
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCF_MCSCF3
+C>
+C>    @brief   get energy of the (averaged) state in MCSCF iterations
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITER: iteration step
+C>             MXRT: maximum number of states
+C>             E: free energy of the (averaged) state
+C>             ESTATE: energy of each state (not used)
+C>
+      SUBROUTINE RSM_SCF_MCSCF3(ITER,MXRT,E,ESTATE)
+
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ICC, ITDDFT, RSM_SCF_SETPAR,
+     *                     RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1
+      USE RISM_MOD, ONLY : EUU, EUV_E8, RSM_SETENE, RSM_PUTENE, FRISM
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: ITER, MXRT
+      DOUBLE PRECISION, INTENT(IN   ) :: ESTATE(*)
+      DOUBLE PRECISION, INTENT(INOUT) :: E
+C
+      DOUBLE PRECISION                :: EUV_E2, EUV_E2X
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SETABS
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETENE
+C
+      IF(ITER > 1) THEN
+        CALL RSM_GETEDAT_MCSCF1(EUV_E8,EUV_E2,EUV_E2X)
+        E = E - EUV_E8 + EUV_E2 - EUV_E2X + FRISM
+      ENDIF
+C
+!     DO ISTAT=1,MXRT
+!        ESTATE(ISTAT) = ESTATE(ISTAT) - EUV_E8 + FRISM
+!     ENDDO
+C
+      CALL RSM_CLOSEABS
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_PUTENE
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFEND_MCSCF
+C>
+C>    @brief   finalize RISM-SCF calculation with MCSCF
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MASWRK: master node or not
+C>             L1: the number of atomic orbitals
+C>             L2: (L1*L1+L1)/2
+C>             HCORE: bare Hamiltonian (not used)
+C>             ESTATE: energies of states
+C>             NEEDRSM: memory size required by RISM-SCF
+C>
+
+      SUBROUTINE RSM_SCFEND_MCSCF(MASWRK,L1,L2,HCORE,ESTATE,NEEDRSM)
+
+      use mx_limits, only: mxrt
+
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, ICC, ITDDFT, RSM_SCF_SETPAR,
+     *                     RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1,
+     *                     RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR
+      USE RISM_MOD, ONLY : EUU, EUV_E8, RSM_SETENE, RSM_PUTENE, FRISM,
+     *                     RSM_SETPAR, IROOT
+
+      IMPLICIT NONE
+
+      LOGICAL,          INTENT(IN   ) :: MASWRK
+      INTEGER,          INTENT(IN   ) :: L1, L2, NEEDRSM
+      DOUBLE PRECISION, INTENT(INOUT) :: ESTATE(*), HCORE(*)
+C
+C     GAMESS
+C
+      INTEGER :: IR, IW, IP, IJKO, IJKT, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IJKO,IJKT,IDAF,NAV,IODA(950)
+
+      INTEGER :: NFLGDM, IWTS, NCORSV, NCOR, NACT, NORB,
+     *           NA, NB, K, KST, IROOT_GMS, IPURES, MAXW1, NITER, MAXP,
+     *           NCI, IGPDET, KSTSYM, NFTGCI, IDWEIGH, IFTS
+      DOUBLE PRECISION :: WSTATE, SPINS, CRIT, PRTTOL, SDET, SZDET,
+     *           GRPDET, STSYM, GLIST, DWPARM, FSTATE
+      COMMON /DETWFN/ WSTATE(MXRT),SPINS(MXRT),CRIT,PRTTOL,SDET,SZDET,
+     *                GRPDET,STSYM,GLIST,DWPARM,
+     *                NFLGDM(MXRT),IWTS(MXRT),NCORSV,NCOR,NACT,NORB,
+     *                NA,NB,K,KST,IROOT_GMS,IPURES,MAXW1,NITER,MAXP,NCI,
+     *                IGPDET,KSTSYM,NFTGCI,IDWEIGH,
+     *                fstate(mxrt),ifts(mxrt)
+C
+      INTEGER :: IS, NXTR
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM == 0) THEN
+        CALL RSM_SETABS
+        CALL RSM_SETPAR
+        CALL RSM_SETENE
+        CALL RSM_SCF_SETINF1
+        CALL RSM_SCF_SETVAR
+C
+C       FOR MCQDPT CALCULATION
+C
+C       THESE TWO lINES WERE COMMENTED OUT, BECAUSE WE SKIP
+C       COLUMBUS_MCQDPT_1 IN mcqdpt.src
+C
+!
+!       CALL DAREAD(IDAF,IODA,HCORE,L2,87,0)
+!       CALL DAWRIT(IDAF,IODA,HCORE,L2,11,0)
+C
+C       PUNC OUT Solvated FOCK
+C
+        CALL RSM_SVSLVFCK(MASWRK,IP,L2)
+C
+C       GET ENERGIES
+C
+        NXTR=0
+        LP1 : DO IS=1,K
+          IF(IPURES == 1 .AND. ABS(SPINS(IS)-SDET) > 0.03D+00) CYCLE LP1
+          NXTR=NXTR+1
+          IF(WSTATE(NXTR) > 0.0D+00) THEN
+            CALL RSM_GETEDAT_MCSCF2(MASWRK,IW,L1,L2,IROOT,NXTR,
+     *                              ESTATE(IS))
+          ENDIF
+        ENDDO LP1
+C
+C       CLOSE
+C
+        CALL RSM_CLOSEABS
+        CALL RSM_SCF_CLOSEINF1
+        CALL RSM_SCF_PUTVAR
+C
+C       DEALLOCATE MEMORIES
+C
+        CALL RETFM(NEEDRSM)
+      ENDIF
+C
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFEND_TRNSTN
+C>
+C>    @brief   finalize RISM-SCF calculation with transition moments calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_SCFEND_TRNSTN
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, IEQ, RSM_SCF_SETPAR, RSM_SCF_PUTPAR
+
+      IMPLICIT NONE
+
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        RETURN
+      ENDIF
+C
+      IEQ = 0
+C
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_CLDA
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFEND
+C>
+C>    @brief   finalize RISM-SCF calculation 
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ETOT: free energy of the molecule
+C>             JOBTYP: job type
+C>
+      SUBROUTINE RSM_SCFEND
+
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, RSM_SCF_SETPAR, RSM_SCF_SETINF1
+      USE RISM_MOD, ONLY : RSM_SETENE, RSM_SETPAR 
+
+      IMPLICIT NONE
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SETABS
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETPAR
+      CALL RSM_SETENE
+C
+      CALL RSM_FINILIZE
+C
+      CALL RSM_CLOSEABS
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFGRD_1
+C>
+C>    @brief   turn off PROJGRAD
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   PROJGRAD: perform the projection of gradients or not
+C>
+      SUBROUTINE RSM_SCFGRD_1(PROJGRAD)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, RSM_SCF_SETPAR
+
+      IMPLICIT NONE
+
+      LOGICAL, INTENT(  OUT) :: PROJGRAD
+
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        RETURN
+      ENDIF
+C
+      PROJGRAD=.FALSE.
+C
+      CALL RSM_CLDA
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SCFGRD_2
+C>
+C>    @brief   compute gradients in solution
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_SCFGRD_2
+
+      use mx_limits, only: mxatm
+
+      USE RISM_IO,   ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,    ONLY : IRISM, ITRRSM, NUM, NQMT, RSM_SCF_SETPAR,
+     *                      RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1,
+     *                      RSM_SCF_SETVAR,
+     *                      RSM_SCF_PUTVAR, RSM_SCF_PUTPAR, IEQ,
+     *                      RSM_SCF_SETINF2, RSM_SCF_CLOSEINF2, NAT, 
+     *                      IDFT, VPR
+      USE RISM_MOD,  ONLY : IGRD_TYP, RSM_SETPAR, RSM_SETVAR,
+     *                      RSM_PUTVAR, RSM_PUTENE
+      USE ABSMOD,    ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RSM_BSMOD, ONLY : RSM_SCF_SETBS, RSM_SCF_CLOSEBS
+
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION :: E, EG
+      COMMON /FUNCT / E,EG(3,MXATM)
+
+      INTEGER :: NEVALS, NGLEVL, NHLEVL
+      DOUBLE PRECISION :: RUNTYP, EXETYP
+      COMMON /RUNOPT/ RUNTYP,EXETYP,NEVALS,NGLEVL,NHLEVL
+
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      INTEGER :: MPLEVL, MPCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      INTEGER :: METMP2, NWDMP2, MEMPRI, MPPROP, NACORE, NBCORE, NOA, 
+     *           NOB, NORB, NBF, NOMIT, MOCPHF, MAXITC
+      DOUBLE PRECISION :: OSPT, CODEMP, SCSPT, TOL
+      COMMON /MP2PAR/ OSPT,CODEMP,SCSPT,TOL,METMP2,NWDMP2,MEMPRI,MPPROP,
+     *                NACORE,NBCORE,NOA,NOB,NORB,NBF,NOMIT,MOCPHF,MAXITC
+C
+      DOUBLE PRECISION :: IMS, CHECK
+      DATA IMS/8HIMS     /
+      DATA CHECK  /8HCHECK   /
+C
+      INTEGER             :: I, J
+
+      DOUBLE PRECISION, ALLOCATABLE :: DA(:), DB(:), DERSM(:,:)
+C
+C
+C
+      IF(EXETYP == CHECK) RETURN
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SCF_SETINF2
+      CALL RSM_SETABS
+      CALL RSM_SCF_SETBS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+C     MEMORY ALLOCATAION
+C
+      ALLOCATE(DA(NUM*(NUM+1)/2),DB(NUM*(NUM+1)/2),DERSM(3,NAT))
+C
+C     GET DA
+C
+      CALL RSM_GETDAT3(NUM,DA,DB)
+C
+C     GRADIENT
+C
+      CALL RSM_GRD(IEQ,VPR,DA,DERSM)
+C
+C     SAVE
+C
+C     CONTRIBUTION TO THE TOTAL GRADIENTS -----
+C
+      DO I=1,NAT
+!       print *,eg(1,i),eg(2,i),eg(3,i)
+        DO J=1,3
+          EG(J,I) = EG(J,I) + DERSM(J,I)
+        ENDDO
+      ENDDO
+C
+C       MP2 (IMS)
+C 
+      IF(MPLEVL.GT.0.AND.CODEMP.EQ.IMS) THEN     
+        CALL RSM_DARE(DERSM,3*NAT,62,0) 
+
+        DO I=1,NAT
+          DO J=1,3
+            EG(J,I) = EG(J,I) + DERSM(J,I)
+          ENDDO
+        ENDDO
+      ENDIF
+C
+C     CLOSE
+C
+      CALL RSM_PUTENE
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEINF2
+      CALL RSM_CLOSEABS
+      CALL RSM_SCF_CLOSEBS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+C     DEALLOCATE
+C      
+      DEALLOCATE(DA,DB,DERSM)
+      RETURN
+      END
+C*MODULE RSM_GMS_MAIN  *DECK RSM_INPCHK
+C>
+C>    @brief   input check of RISM-SCF calculations
+C>
+C>    @author  Daisuke Yokogawa
+C>
+
+      SUBROUTINE RSM_INPCHK
+
+      USE RISM_IO,  ONLY : IR, IW
+      USE RSMSED,   ONLY : IEQ, NPRINT
+      USE RISM_MOD, ONLY : MASWRK, IROOT
+
+      use mx_limits, only: mxnoro
+
+      IMPLICIT NONE
+C
+C     GAMESS
+C
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      INTEGER :: MPLEVL, MPCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      INTEGER :: NEVALS, NGLEVL, NHLEVL 
+      DOUBLE PRECISION :: RUNTYP, EXETYP
+      COMMON /RUNOPT/ RUNTYP,EXETYP,NEVALS,NGLEVL,NHLEVL
+
+      DOUBLE PRECISION :: ENERGY,GRAD,HSSIAN,PROP,OPTMIZ,SADPT,AIRC,DRC,
+     *                    AMEX,MOROKM,TRNSTN,TRUDGE,FFIELD,TDHF,XTDHF, 
+     *                    GRDXTR,MAKEFP,MD,VSCF,RAMAN,GLOBOP,NMR,FMO0, 
+     *                   OPTFMO,BNDANA,NACME,G3MP2,GAMMA,LMOEDA,FMOHESS,
+     *                    COMP,CONICL,QMEFPEA,CIMFINAL,CIMSUB
+      DATA ENERGY /8HENERGY  /, GRAD   /8HGRADIENT/, HSSIAN /8HHESSIAN /
+      DATA PROP   /8HPROP    /, OPTMIZ /8HOPTIMIZE/, SADPT  /8HSADPOINT/
+      DATA AIRC   /8HIRC     /, DRC    /8HDRC     /, AMEX   /8HMEX     /
+      DATA MOROKM /8HMOROKUMA/, TRNSTN /8HTRANSITN/, TRUDGE /8HTRUDGE  /
+      DATA FFIELD /8HFFIELD  /, TDHF   /8HTDHF    /, XTDHF  /8HTDHFX   /
+      DATA GRDXTR /8HGRADEXTR/, MAKEFP /8HMAKEFP  /, MD     /8HMD      /
+      DATA VSCF   /8HVSCF    /, RAMAN  /8HRAMAN   /, GLOBOP /8HGLOBOP  /
+      DATA NMR    /8HNMR     /
+      DATA FMO0   /8HFMO0    /, OPTFMO /8HOPTFMO  /, BNDANA /8HBONDANAL/
+      DATA NACME  /8HNACME   /, G3MP2  /8HG3MP2   /, GAMMA  /8HGAMMA   /
+      DATA LMOEDA /8HLMOEDA  /, FMOHESS/8HFMOHESS /, COMP   /8HCOMP    /
+      DATA CONICL /8HCONICAL /, QMEFPEA/8HQMEFPEA /
+      DATA CIMFINAL/8HCIMFINAL/,CIMSUB /8HCIMSUB  /
+C SCF OPTION
+      LOGICAL :: DIRSCF,FDIFF
+      COMMON /OPTSCF/ DIRSCF,FDIFF
+C MCSCF/MCQDPT2
+      DOUBLE PRECISION :: METHOD,CISTEP,FINALCI,ACURCY,ENGTOL,DAMP
+      INTEGER :: MICIT,NWORD,NORB,NOROT,MOFRZ,NPFLG,NOFO,MCFMO,IDIABAT
+      LOGICAL :: CANONC,FCORE,FORS,EKT,LINSER
+      COMMON /MCINP / METHOD,CISTEP,FINALCI,ACURCY,ENGTOL,DAMP,
+     *                MICIT,NWORD,NORB,NOROT(2,MXNORO),MOFRZ(15),
+     *                NPFLG(10),NOFO,MCFMO,IDIABAT,
+     *                CANONC,FCORE,FORS,EKT,LINSER
+ 
+      DOUBLE PRECISION :: TYPMRPT
+      INTEGER :: INORBMC, MCVEC
+      COMMON /MRPTIN/ TYPMRPT,INORBMC,MCVEC
+C
+      DOUBLE PRECISION :: RMC, RNONE, RHF, ALDET, GRPMQ
+      DATA RMC/8HMCSCF   /, RNONE/8HNONE    /, RHF/8HRHF     /,
+     *     ALDET /8HALDET   /, GRPMQ/8HMCQDPT  /
+
+      INTEGER :: IEOF
+C
+C     SCF OPTIONS
+C 
+      IF(FDIFF) THEN
+        IF(MASWRK) THEN
+          WRITE(IW,*) 'FDIFF SOULD BE .F. FOR GOOD CONVERGENCE IN RISM!'
+        ENDIF
+        FDIFF = .FALSE.
+      ENDIF
+C
+C     CC CALCULATIONS
+C
+      IF(CCTYP.NE.RNONE .and. SCFTYP.NE.RHF) THEN
+        IF(MASWRK) THEN
+          WRITE(IW,*) 'RISM DOES NOT SUPPORT CC CALCULATIONS WITH UHF!'
+        ENDIF
+        CALL ABRT
+      ENDIF
+C
+C     SCFTYP = MCSCF
+C
+      IF(SCFTYP == RMC) THEN
+        IF(IROOT == -1) THEN
+          IF(MASWRK) WRITE(IW,*) 'IROOT SHOULD BE SET!'
+          CALL ABRT
+        ENDIF
+
+        IF(CISTEP /= ALDET) THEN
+          IF(MASWRK) WRITE(IW,*) 'RISM WORKS ONLY WITH CISTEP = ALDET.'
+          CALL ABRT
+        ENDIF
+
+        IF(MPLEVL == 2 .AND. TYPMRPT /= GRPMQ) THEN
+          IF(MASWRK) WRITE(IW,*) 'RISM WORKS ONLY WITH MRPT = MCQDPT.'
+          CALL ABRT
+        ENDIF
+      ENDIF
+C
+C     RUNTYP = TRNSTN
+C
+      IF(RUNTYP.EQ.TRNSTN) THEN
+        IEQ = 1
+        NPRINT = 0
+ 
+        IF(IROOT == -1) THEN
+          IF(MASWRK) WRITE(IW,*) 'IROOT SHOULD BE SET!'
+          CALL ABRT
+        ENDIF  
+
+        CALL SEQREW(IR)
+        CALL FNDGRP(IR,' $VMAT  ',IEOF)
+        IF (IEOF.NE.0) THEN
+          IF(MASWRK) WRITE(IW,*) 'THERE IS NO DATA ABOUT $VMAT' 
+          CALL ABRT
+        ENDIF
+
+        CALL SEQREW(IR)
+        CALL FNDGRP(IR,' $SLVFCK',IEOF)
+        IF (IEOF.NE.0) THEN
+          IF(MASWRK) WRITE(IW,*) 'THERE IS NO DATA ABOUT $SLVFCK'
+          CALL ABRT
+        ENDIF
+          
+      ENDIF
+
+      END SUBROUTINE
+
+C*MODULE RSM_GMS_MAIN  *DECK RSM_SETIRISM
+C>
+C>    @brief   set IRISM
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IRISM_GMS: 0: RISM-SCF calculation, 1: gas phase
+C>
+      SUBROUTINE RSM_SETIRISM(IRISM_GMS)
+
+      USE RSMSED,   ONLY : IRISM, RSM_SCF_SETPAR
+
+      IMPLICIT NONE
+C
+      INTEGER, INTENT(  OUT) :: IRISM_GMS
+
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SCF_SETPAR
+      
+      IRISM_GMS = IRISM
+
+      CALL RSM_CLDA
+
+      END 

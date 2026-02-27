@@ -1,0 +1,1644 @@
+C*MODULE RSM_FFTDRV  *DECK FFT_MOD
+C>
+C>    @brief   module for FFT calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      MODULE FFT_MOD
+
+      USE RISM_MOD,   ONLY : NTAB
+C     UN grid
+      USE RISMUN_MOD, ONLY : DELTR, DELTK
+C     LN grid
+      USE RISMLN_MOD, ONLY : DRHO, RHOM
+
+      IMPLICIT NONE
+C
+C     uniform grid
+C
+      INTEGER,          SAVE        :: LIP_UN, LT_UN, LW_UN
+      INTEGER,          ALLOCATABLE :: IP_UN(:)
+ 
+      DOUBLE PRECISION, SAVE        :: FACTFR, FACTBK
+      DOUBLE PRECISION, ALLOCATABLE :: T_UN(:), WK_UN(:)
+C
+C     log grid 
+C
+      INTEGER,            SAVE        :: LIP_LN
+      INTEGER,            ALLOCATABLE :: IP_LN(:)
+      DOUBLE PRECISION,   SAVE        :: DT,TPFOR,TPRV
+      DOUBLE PRECISION,   ALLOCATABLE :: R32(:), WK_LN(:)
+      COMPLEX(KIND(0D0)), ALLOCATABLE :: XM(:,:),FOU(:)
+
+      CONTAINS
+C///////////////////////////////////////////
+C
+C     UNIFORM GRID
+C
+C///////////////////////////////////////////
+C>
+C>    @brief   set parameters for uniform grid FFT
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_SETFFT_UN
+C
+      DOUBLE PRECISION :: PI
+C
+      PI=ACOS(-1.0D+00)
+
+      FACTFR = 4.0D+00*PI*DELTR
+      FACTBK = 0.5D+00/(PI**2)*DELTK
+C
+      LIP_UN = 2+INT(SQRT(DFLOAT(NTAB/4))) + 1
+      LT_UN  = NTAB/2
+      LW_UN  = INT(DFLOAT(NTAB)*5.0D+00/8.0D+00)
+C
+      CALL RSM_DAWR(LIP_UN,1,611,0)
+      CALL RSM_DAWR(LT_UN ,1,612,0)
+      CALL RSM_DAWR(LW_UN ,1,613,0)
+      CALL RSM_DAWR(FACTFR,1,614,0)
+      CALL RSM_DAWR(FACTBK,1,615,0)
+C
+      END SUBROUTINE
+C>
+C>    @brief   iitialize the parameters
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_INITIAL_UN
+C
+      CALL RSM_DARE(LIP_UN,1,611,0)
+      CALL RSM_DARE(LT_UN ,1,612,0)
+      CALL RSM_DARE(LW_UN ,1,613,0)
+      CALL RSM_DARE(FACTFR,1,614,0)
+      CALL RSM_DARE(FACTBK,1,615,0)
+
+      ALLOCATE(IP_UN(LIP_UN),T_UN(LT_UN),WK_UN(LW_UN))
+C
+C     INITIALIZE IP AND WK
+C
+      CALL VCLR (WK_UN,1,LW_UN )
+      CALL VICLR(IP_UN,1,LIP_UN)
+C
+      RETURN
+      END SUBROUTINE
+C>
+C>    @brief   uniform grid FFT
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITYPE: 0: backward, 1: forward 
+C>             FFT: array for FFT
+C>
+      SUBROUTINE RSM_FFT1D_UN(ITYPE,FFT)
+
+      INTEGER,          INTENT(IN   ) :: ITYPE
+      DOUBLE PRECISION, INTENT(INOUT) :: FFT(1)
+C
+      INTEGER               :: IGRID
+C
+C     FAST FOURIER TRANSFORMATION
+C
+      CALL RSM_DFST(NTAB,FFT,T_UN,IP_UN,WK_UN)
+C
+      IF(ITYPE.EQ.1) THEN
+        DO IGRID=1,NTAB
+          FFT(IGRID)=FFT(IGRID)*FACTFR
+        ENDDO
+      ELSE
+        DO IGRID=1,NTAB
+          FFT(IGRID)=FFT(IGRID)*FACTBK
+        ENDDO
+      ENDIF
+C
+      RETURN
+      END SUBROUTINE
+C>
+C>    @brief   deallocate memories
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_CLOSEFFT_UN
+
+      DEALLOCATE(IP_UN,T_UN,WK_UN)
+C
+      END SUBROUTINE
+
+C/////////////////////////////////////
+C
+C     LOG GRID
+C
+C////////////////////////////////////
+C>
+C>    @brief   set parameters for log grid FFT
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MXL: maximum number of angular momentum
+C>
+      SUBROUTINE RSM_SETFFT_LN(MXL)
+C
+      INTEGER, INTENT(IN   ) :: MXL
+
+      DOUBLE PRECISION       :: TPN, TPF, TWOPI
+
+      TWOPI=8.0D+00*ATAN(1.0D+00)
+C
+      DT   =TWOPI/(DRHO*2*NTAB)
+      TPN  =1.0D+00/DFLOAT(NTAB)
+      TPF  =TWOPI*SQRT(TWOPI)
+      TPRV =TPN/TPF        !    reverse
+      TPFOR=TPF*TPN        !    forward
+C
+      LIP_LN = 2 + INT(SQRT(REAL(2*NTAB,8))) 
+C
+      CALL RSM_DAWR(LIP_LN,1,611,0)
+      CALL RSM_DAWR(DT    ,1,612,0)
+      CALL RSM_DAWR(TPFOR ,1,613,0)
+      CALL RSM_DAWR(TPRV  ,1,614,0)
+C
+      RETURN
+      END SUBROUTINE
+C>
+C>    @brief   initialize parameters for log grid FFT
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MXL: maximum number of angular momentum
+C>
+      SUBROUTINE RSM_INITIAL_LN(MXL)
+C
+      INTEGER, INTENT(IN   ) :: MXL
+C
+      INTEGER                :: I
+      DOUBLE PRECISION       :: XRR, RTMP
+
+      CALL RSM_DARE(LIP_LN,1,611,0)
+      CALL RSM_DARE(DT    ,1,612,0)
+      CALL RSM_DARE(TPFOR ,1,613,0)
+      CALL RSM_DARE(TPRV  ,1,614,0)
+
+      ALLOCATE(IP_LN(LIP_LN),XM(NTAB,MXL+1),FOU(2*NTAB),R32(NTAB),
+     *         WK_LN(NTAB))
+
+      CALL VICLR(IP_LN,1,LIP_LN)
+C
+      CALL RSM_MGEN(DRHO,RHOM,NTAB,MXL,XM)
+C
+      DO I=1,NTAB
+        XRR=(I-1)*DRHO+RHOM
+        RTMP=EXP(XRR)
+        R32(I)=SQRT(RTMP)*RTMP
+      ENDDO
+
+      RETURN
+      END SUBROUTINE
+
+      SUBROUTINE RSM_CLOSEFFT_LN
+C
+      DEALLOCATE(IP_LN,XM,FOU,R32,WK_LN)
+C
+      END SUBROUTINE
+C>
+C>    @brief   log grid FFT
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITYPE: 0: backward, 1: forward
+C>             MXL: maximum number of angular momentum
+C>             F: array for FFT
+C>
+      SUBROUTINE RSM_FFT1D_LN(ITYPE,MXL,F)
+C
+      INTEGER,          INTENT(IN   ) :: ITYPE, MXL
+      DOUBLE PRECISION, INTENT(INOUT) :: F(NTAB,*)
+
+      INTEGER                         :: L, M, LM, I
+      DOUBLE PRECISION                :: XT, FF
+      DOUBLE PRECISION, PARAMETER     :: THF = 1.5D+00
+      COMPLEX(KIND(0D0))              :: XPZ,FFAC,CX
+      COMPLEX(KIND(0D0)), PARAMETER   :: ZERO=(0.0D+00,0.0D+00)
+C                                    
+C** FOURIER... FIRST PHI
+C
+      LM=0
+      DO L=0,MXL
+        DO M=-L,L
+          LM=LM+1
+          DO I=1,NTAB
+            FOU(I     )=F(I,LM)*R32(I)
+            FOU(I+NTAB)=0.0D+00
+          ENDDO
+** FOR ZERO TO RMIN CORRECT FFAC=RMIN**3/2*F(RMIN)
+          FFAC=FOU(1)/DRHO
+          XPZ =FOU(1)*0.5D+00
+C
+          CALL RSM_CDFT(4*NTAB,1,FOU,IP_LN,WK_LN)
+C
+C** ZERO TO RMIN CORRECTION
+          DO I=1,NTAB
+            XT=(I-1)*DT
+            CX=FFAC/DCMPLX(THF,XT)
+            FOU(I)=FOU(I)+CX-XPZ
+          ENDDO
+          XPZ=FOU(1)*0.5D+00
+C** FORM M(T)*PHI(T)
+          DO I=1,NTAB
+            FOU(I     )=FOU(I)*XM(I,L+1)
+            FOU(I+NTAB)=ZERO
+          ENDDO
+C
+          CALL RSM_CDFT(4*NTAB,1,FOU,IP_LN,WK_LN)
+
+          IF(ITYPE.EQ.1) THEN
+            DO I=1,NTAB
+              FF=FOU(I)-XPZ
+              F(I,LM)=FF*TPFOR/R32(I)
+            ENDDO
+          ELSE
+            DO I=1,NTAB
+              FF=FOU(I)-XPZ
+              F(I,LM)=FF*TPRV/R32(I)
+            ENDDO
+          ENDIF
+        ENDDO
+
+      ENDDO
+C
+      RETURN
+      END SUBROUTINE
+C>
+C>    @brief   log grid FFT for MXL = 0
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITYPE: 0: backward, 1: forward
+C>             F1: array for FFT
+C>
+      SUBROUTINE RSM_FFT1D_LN0(ITYPE,F1)
+C
+      INTEGER,          INTENT(IN   ) :: ITYPE
+      DOUBLE PRECISION, INTENT(INOUT) :: F1(NTAB)
+
+      INTEGER                         :: I
+      DOUBLE PRECISION                :: XT, FF
+      DOUBLE PRECISION, PARAMETER     :: THF = 1.5D+00
+      COMPLEX(KIND(0D0))              :: XPZ,FFAC,CX
+      COMPLEX(KIND(0D0)), PARAMETER   :: ZERO=(0.0D+00,0.0D+00)
+C 
+C** FOURIER... FIRST PHI
+C
+      DO I=1,NTAB
+        FOU(I     ) = F1(I)*R32(I)
+        FOU(I+NTAB) = 0.0D+00              !  High-path filter
+      ENDDO
+** FOR ZERO TO RMIN CORRECT FFAC=RMIN**3/2*F(RMIN)
+      FFAC=FOU(1)/DRHO
+      XPZ =FOU(1)*0.5D+00
+C
+      CALL RSM_CDFT(4*NTAB,1,FOU,IP_LN,WK_LN)
+C
+C** ZERO TO RMIN CORRECTION
+      DO I=1,NTAB
+        XT=(I-1)*DT
+        CX=FFAC/DCMPLX(THF,XT)
+        FOU(I)=FOU(I)+CX-XPZ
+      ENDDO
+      XPZ=FOU(1)*0.5D+00
+
+C** FORM M(T)*PHI(T)
+      DO I=1,NTAB
+        FOU(I     )=FOU(I)*XM(I,1)
+        FOU(I+NTAB)=ZERO
+      ENDDO
+C
+      CALL RSM_CDFT(4*NTAB,1,FOU,IP_LN,WK_LN)
+
+      IF(ITYPE.EQ.1) THEN
+        DO I=1,NTAB
+          FF   =FOU(I)-XPZ
+          F1(I)=FF*TPFOR/R32(I)
+        ENDDO
+      ELSE
+        DO I=1,NTAB
+          FF   =FOU(I)-XPZ
+          F1(I)=FF*TPRV/R32(I)
+        ENDDO
+      ENDIF
+C
+      RETURN
+      END SUBROUTINE
+
+      END MODULE
+C*MODULE RSM_FFTDRV  *DECK RSM_MGEN
+C>
+C>    @brief   subroutine for log grid FFT
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   DRHO: grid width
+C>             RHOM: minimum value of grid
+C>             N: number of grid points
+C>             MXL: maximum number of grid points
+C>             XM: array for log grid FFT
+C>
+      SUBROUTINE RSM_MGEN(DRHO,RHOM,N,MXL,XM)
+      IMPLICIT NONE
+C
+      INTEGER,            INTENT(IN   ) :: N, MXL
+      DOUBLE PRECISION,   INTENT(IN   ) :: DRHO, RHOM
+      COMPLEX(KIND(0D0)), INTENT(INOUT) :: XM(N,MXL+1)
+C
+      DOUBLE PRECISION, PARAMETER       :: PI=3.141592653589793D+00
+C
+      COMPLEX(KIND(0D0))                :: FACT(MXL+1),TMP,TMPXM
+      DOUBLE PRECISION          :: TP, DT, ZR, PNO, RNO, XT, ZZR,
+     *                             RV, PV, S1, S3, S5, R1, R3, R5, 
+     *                             F1, F2, TMPSGN
+      INTEGER                   :: NR2, I, J, L, M
+C
+      TP  =2.0D+00*PI
+      NR2 =2*N
+      DT  =PI/(DRHO*DFLOAT(N))
+      ZR  =2.0D+00*DT*RHOM
+
+      PNO=2.0D+00/11.0D+00   !   2/(2m+1)
+      RNO=30.25D+00        !   (m+1/2)^2
+      DO I=1,N
+         XT =DFLOAT(I-1)*DT
+         ZZR=ZR*DFLOAT(I-1)
+C     ----- Prepare
+         FACT(1)=DCMPLX(1.0D+00,0.0D+00)
+         DO J=2,MXL+1
+            TMP=DCMPLX(1.0D+00,0.0D+00)
+            DO L=1,J-1
+*              TMP=TMP*DCMPLX(DFLOAT(2*(J-1)-1)    ,-2.0D+00*XT)
+*    *                /DCMPLX(DFLOAT(2*(J-1)-2*L-1), 2.0D+00*XT)
+               TMP=TMP*DCMPLX(DFLOAT(L)-0.5D+00            ,-1.0D+00*XT)
+     *               /DCMPLX(DFLOAT(2*L)-DFLOAT(J-1)-0.5D+00,1.0D+00*XT)
+            ENDDO
+            FACT(J)=TMP
+         ENDDO
+C** COMPUTE ARG GAMMA WITH N=5 ... SEE TALMAN ARTICLE
+         RV=SQRT(RNO+XT*XT)
+         PV=ATAN(PNO*XT)
+         S1=SIN(PV)
+         S3=SIN(3.0D+00*PV)
+         S5=SIN(5.0D+00*PV)
+         R1=RV
+         R3=RV*RV*RV
+         R5=R3*RV*RV
+         F2=ATAN(TANH(PI*XT/2.0D+00))
+*          print *,ZZR
+         F1=ZZR
+     *     +XT
+     *     -XT*LOG(RV)
+     *     -5.0D+00*PV
+     *     +S1/(12.0D+00*R1)
+     *     -S3/(360.0D+00*R3)
+     *     +S5/(1260.0D+00*R5)
+         DO M=1,5
+            F1=F1+ATAN(XT*2.0D+00/DFLOAT(2*M-1))
+         ENDDO
+C
+         TMPSGN=1.0D+00
+         DO J=1,MXL+1
+            TMPSGN=-TMPSGN
+            TMPXM=EXP(DCMPLX(0.0D+00,F1)+TMPSGN*DCMPLX(0.0D+00,F2))
+            XM(I,J)=(-1.0D+00)**((J-1)/2)*TMPXM*FACT(J)
+         ENDDO
+      ENDDO
+
+      RETURN
+      END
+
+C*MODULE RSM_FFTDRV  *DECK RSM_DFST
+C>
+C>    @brief   Sine transform of RDFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE DFST
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length + 1
+C>             A: input/output data
+C>             T: work area
+C>             IP: work area for bit reversal
+C>             W: cos/sin table
+C>    
+      subroutine rsm_dfst(n, a, t, ip, w)
+
+      implicit none
+
+      integer,          intent(in   ) :: n
+      integer,          intent(inout) :: ip(0 : *)
+      double precision, intent(inout) :: a(0 : n - 1), t(0 : n / 2 - 1), 
+     *                                   w(0 : *)
+
+      integer          :: j, k, l, m, mh, nw, nc
+      double precision :: xr, xi, yr, yi
+
+      nw = ip(0)
+      if (n .gt. 8 * nw) then
+          nw = n / 8
+          call rsm_makewt(nw, ip, w)
+      end if
+      nc = ip(1)
+      if (n .gt. 2 * nc) then
+          nc = n / 2
+          call rsm_makect(nc, ip, w(nw))
+      end if
+      if (n .gt. 2) then
+          m = n / 2
+          mh = m / 2
+          do j = 1, mh - 1
+              k = m - j
+              xr = a(j) + a(n - j)
+              xi = a(j) - a(n - j)
+              yr = a(k) + a(n - k)
+              yi = a(k) - a(n - k)
+              a(j) = xr
+              a(k) = yr
+              t(j) = xi + yi
+              t(k) = xi - yi
+          end do
+          t(0) = a(mh) - a(n - mh)
+          a(mh) = a(mh) + a(n - mh)
+          a(0) = a(m)
+          call rsm_dstsub(m, a, nc, w(nw))
+          if (m .gt. 4) then
+              call rsm_bitrv2(m, ip(2), a)
+              call rsm_cftfsub(m, a, w)
+              call rsm_rftfsub(m, a, nc, w(nw))
+          else if (m .eq. 4) then
+              call rsm_cftfsub(m, a, w)
+          end if
+          a(n - 1) = a(1) - a(0)
+          a(1) = a(0) + a(1)
+          do j = m - 2, 2, -2
+              a(2 * j + 1) = a(j) - a(j + 1)
+              a(2 * j - 1) = -a(j) - a(j + 1)
+          end do
+          l = 2
+          m = mh
+          do while (m .ge. 2)
+              call rsm_dstsub(m, t, nc, w(nw))
+              if (m .gt. 4) then
+                  call rsm_bitrv2(m, ip(2), t)
+                  call rsm_cftfsub(m, t, w)
+                  call rsm_rftfsub(m, t, nc, w(nw))
+              else if (m .eq. 4) then
+                  call rsm_cftfsub(m, t, w)
+              end if
+              a(n - l) = t(1) - t(0)
+              a(l) = t(0) + t(1)
+              k = 0
+              do j = 2, m - 2, 2
+                  k = k + 4 * l
+                  a(k - l) = -t(j) - t(j + 1)
+                  a(k + l) = t(j) - t(j + 1)
+              end do
+              l = 2 * l
+              mh = m / 2
+              do j = 1, mh - 1
+                  k = m - j
+                  t(j) = t(m + k) + t(m + j)
+                  t(k) = t(m + k) - t(m + j)
+              end do
+              t(0) = t(m + mh)
+              m = mh
+          end do
+          a(l) = t(0)
+      end if
+      a(0) = 0.0d+00
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_CDFT
+C>
+C>    @brief   Complex DFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE CDFT
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length + 1
+C>             A: input/output data
+C>             IP: work area for bit reversal
+C>             W: cos/sin table
+C>
+      subroutine rsm_cdft(n, isgn, a, ip, w)
+
+      implicit none
+
+      integer,          intent(in   ) :: n, isgn
+      integer,          intent(inout) :: ip(0 : *)
+      double precision, intent(inout) :: a(0 : n - 1), w(0 : *)
+
+      if (n .gt. 4 * ip(0)) then
+          call rsm_makewt(n / 4, ip, w)
+      end if
+      if (n .gt. 4) then
+          if (isgn .ge. 0) then
+              call rsm_bitrv2(n, ip(2), a)
+              call rsm_cftfsub(n, a, w)
+          else
+              call rsm_bitrv2conj(n, ip(2), a)
+              call rsm_cftbsub(n, a, w)
+          end if
+      else if (n .eq. 4) then
+          call rsm_cftfsub(n, a, w)
+      end if
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_MAKEWT
+C>
+C>    @brief   Initializing routines
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE MAKEWT 
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   NW: size of the cos/sin table
+C>             IP: work area for bit reversal
+C>             W: cos/sin table
+C>
+      subroutine rsm_makewt(nw, ip, w)
+
+      implicit none
+
+      integer,          intent(in   ) :: nw
+      integer,          intent(inout) :: ip(0 : *)
+      double precision, intent(inout) :: w(0 : nw - 1)
+
+      integer          :: j, nwh
+      double precision :: delta, x, y
+
+      ip(0) = nw
+      ip(1) = 1
+      if (nw .gt. 2) then
+          nwh = nw / 2
+          delta = atan(1.0d+00) / nwh
+          w(0) = 1.0d+00
+          w(1) = 0.0d+00
+          w(nwh) = cos(delta * nwh)
+          w(nwh + 1) = w(nwh)
+          if (nwh .gt. 2) then
+              do j = 2, nwh - 2, 2
+                  x = cos(delta * j)
+                  y = sin(delta * j)
+                  w(j) = x
+                  w(j + 1) = y
+                  w(nw - j) = y
+                  w(nw - j + 1) = x
+              end do
+              do j = nwh - 2, 2, -2
+                  x = w(2 * j)
+                  y = w(2 * j + 1)
+                  w(nwh + j) = x
+                  w(nwh + j + 1) = y
+              end do
+              call rsm_bitrv2(nw, ip(2), w)
+          end if
+      end if
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_MAKECT
+C>
+C>    @brief   Initializing routines
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE MAKECT
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   NC: size of the cos/sin table
+C>             IP: work area for bit reversal
+C>             C: cos/sin table
+C>
+      subroutine rsm_makect(nc, ip, c)
+
+      integer,          intent(in   ) :: nc
+      integer,          intent(inout) :: ip(0 : *)
+      double precision, intent(inout) :: c(0 : nc - 1)
+
+      integer          :: j, nch
+      double precision :: delta
+
+      ip(1) = nc
+      if (nc .gt. 1) then
+          nch = nc / 2
+          delta = atan(1.0d+00) / nch
+          c(0) = cos(delta * nch)
+          c(nch) = 0.5d+00 * c(0)
+          do j = 1, nch - 1
+              c(j) = 0.5d+00 * cos(delta * j)
+              c(nc - j) = 0.5d+00 * sin(delta * j)
+          end do
+      end if
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_BITRV2
+C>
+C>    @brief   routines for FFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE BITRV2
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length
+C>             IP: work area for bit reversal
+C>             A: input/output data
+C>
+      subroutine rsm_bitrv2(n, ip, a)
+
+      implicit none
+
+      integer,          intent(in   ) :: n
+      integer,          intent(inout) :: ip(0 : *)
+      double precision, intent(inout) :: a(0 : n - 1)
+
+      integer          :: j, j1, k, k1, l, m, m2
+      double precision :: xr, xi, yr, yi
+
+      ip(0) = 0
+      l = n
+      m = 1
+      do while (8 * m .lt. l)
+          l = l / 2
+          do j = 0, m - 1
+              ip(m + j) = ip(j) + l
+          end do
+          m = m * 2
+      end do
+      m2 = 2 * m
+      if (8 * m .eq. l) then
+          do k = 0, m - 1
+              do j = 0, k - 1
+                  j1 = 2 * j + ip(k)
+                  k1 = 2 * k + ip(j)
+                  xr = a(j1)
+                  xi = a(j1 + 1)
+                  yr = a(k1)
+                  yi = a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+                  j1 = j1 + m2
+                  k1 = k1 + 2 * m2
+                  xr = a(j1)
+                  xi = a(j1 + 1)
+                  yr = a(k1)
+                  yi = a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+                  j1 = j1 + m2
+                  k1 = k1 - m2
+                  xr = a(j1)
+                  xi = a(j1 + 1)
+                  yr = a(k1)
+                  yi = a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+                  j1 = j1 + m2
+                  k1 = k1 + 2 * m2
+                  xr = a(j1)
+                  xi = a(j1 + 1)
+                  yr = a(k1)
+                  yi = a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+              end do
+              j1 = 2 * k + m2 + ip(k)
+              k1 = j1 + m2
+              xr = a(j1)
+              xi = a(j1 + 1)
+              yr = a(k1)
+              yi = a(k1 + 1)
+              a(j1) = yr
+              a(j1 + 1) = yi
+              a(k1) = xr
+              a(k1 + 1) = xi
+          end do
+      else
+          do k = 1, m - 1
+              do j = 0, k - 1
+                  j1 = 2 * j + ip(k)
+                  k1 = 2 * k + ip(j)
+                  xr = a(j1)
+                  xi = a(j1 + 1)
+                  yr = a(k1)
+                  yi = a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+                  j1 = j1 + m2
+                  k1 = k1 + m2
+                  xr = a(j1)
+                  xi = a(j1 + 1)
+                  yr = a(k1)
+                  yi = a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+              end do
+          end do
+      end if
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_BITRV2CONJ
+C>
+C>    @brief   routines for FFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE BITRV2CONV
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length
+C>             IP: work area for bit reversal
+C>             A: input/output data
+C>
+      subroutine rsm_bitrv2conj(n, ip, a)
+
+      implicit none
+
+      integer,          intent(in   ) :: n
+      integer,          intent(inout) :: ip(0 : *)
+      double precision, intent(inout) :: a(0 : n - 1)
+
+      integer          :: j, j1, k, k1, l, m, m2
+      double precision :: xr, xi, yr, yi
+
+      ip(0) = 0
+      l = n
+      m = 1
+      do while (8 * m .lt. l)
+          l = l / 2
+          do j = 0, m - 1
+              ip(m + j) = ip(j) + l
+          end do
+          m = m * 2
+      end do
+      m2 = 2 * m
+      if (8 * m .eq. l) then
+          do k = 0, m - 1
+              do j = 0, k - 1
+                  j1 = 2 * j + ip(k)
+                  k1 = 2 * k + ip(j)
+                  xr = a(j1)
+                  xi = -a(j1 + 1)
+                  yr = a(k1)
+                  yi = -a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+                  j1 = j1 + m2
+                  k1 = k1 + 2 * m2
+                  xr = a(j1)
+                  xi = -a(j1 + 1)
+                  yr = a(k1)
+                  yi = -a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+                  j1 = j1 + m2
+                  k1 = k1 - m2
+                  xr = a(j1)
+                  xi = -a(j1 + 1)
+                  yr = a(k1)
+                  yi = -a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+                  j1 = j1 + m2
+                  k1 = k1 + 2 * m2
+                  xr = a(j1)
+                  xi = -a(j1 + 1)
+                  yr = a(k1)
+                  yi = -a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+              end do
+              k1 = 2 * k + ip(k)
+              a(k1 + 1) = -a(k1 + 1)
+              j1 = k1 + m2
+              k1 = j1 + m2
+              xr = a(j1)
+              xi = -a(j1 + 1)
+              yr = a(k1)
+              yi = -a(k1 + 1)
+              a(j1) = yr
+              a(j1 + 1) = yi
+              a(k1) = xr
+              a(k1 + 1) = xi
+              k1 = k1 + m2
+              a(k1 + 1) = -a(k1 + 1)
+          end do
+      else
+          a(1) = -a(1)
+          a(m2 + 1) = -a(m2 + 1)
+          do k = 1, m - 1
+              do j = 0, k - 1
+                  j1 = 2 * j + ip(k)
+                  k1 = 2 * k + ip(j)
+                  xr = a(j1)
+                  xi = -a(j1 + 1)
+                  yr = a(k1)
+                  yi = -a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+                  j1 = j1 + m2
+                  k1 = k1 + m2
+                  xr = a(j1)
+                  xi = -a(j1 + 1)
+                  yr = a(k1)
+                  yi = -a(k1 + 1)
+                  a(j1) = yr
+                  a(j1 + 1) = yi
+                  a(k1) = xr
+                  a(k1 + 1) = xi
+              end do
+              k1 = 2 * k + ip(k)
+              a(k1 + 1) = -a(k1 + 1)
+              a(k1 + m2 + 1) = -a(k1 + m2 + 1)
+          end do
+      end if
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_CFTFSUB
+C>
+C>    @brief   routines for FFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE CFTFSUB
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length
+C>             A: input/output data
+C>             W: cos/sin table
+C>
+      subroutine rsm_cftfsub(n, a, w)
+
+      implicit none
+
+      integer,          intent(in   ) :: n
+      double precision, intent(inout) :: a(0 : n - 1)
+      double precision, intent(in   ) :: w(0 : *)
+
+      integer          :: j, j1, j2, j3, l
+      double precision :: x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i
+
+      l = 2
+      if (n .ge. 16) then
+          call rsm_cft1st(n, a, w)
+          l = 16
+          do while (8 * l .le. n)
+              call rsm_cftmdl(n, l, a, w)
+              l = 8 * l
+          end do
+      end if
+      if (2 * l .lt. n) then
+          do j = 0, l - 2, 2
+              j1 = j + l
+              j2 = j1 + l
+              j3 = j2 + l
+              x0r = a(j) + a(j1)
+              x0i = a(j + 1) + a(j1 + 1)
+              x1r = a(j) - a(j1)
+              x1i = a(j + 1) - a(j1 + 1)
+              x2r = a(j2) + a(j3)
+              x2i = a(j2 + 1) + a(j3 + 1)
+              x3r = a(j2) - a(j3)
+              x3i = a(j2 + 1) - a(j3 + 1)
+              a(j) = x0r + x2r
+              a(j + 1) = x0i + x2i
+              a(j2) = x0r - x2r
+              a(j2 + 1) = x0i - x2i
+              a(j1) = x1r - x3i
+              a(j1 + 1) = x1i + x3r
+              a(j3) = x1r + x3i
+              a(j3 + 1) = x1i - x3r
+          end do
+      else if (2 * l .eq. n) then
+          do j = 0, l - 2, 2
+              j1 = j + l
+              x0r = a(j) - a(j1)
+              x0i = a(j + 1) - a(j1 + 1)
+              a(j) = a(j) + a(j1)
+              a(j + 1) = a(j + 1) + a(j1 + 1)
+              a(j1) = x0r
+              a(j1 + 1) = x0i
+          end do
+      end if
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_CFTBSUB
+C>
+C>    @brief   routines for FFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE CFTBSUB
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length
+C>             A: input/output data
+C>             W: cos/sin table
+C>
+      subroutine rsm_cftbsub(n, a, w)
+
+      implicit none
+
+      integer,          intent(in   ) :: n
+      double precision, intent(inout) :: a(0 : n - 1)
+      double precision, intent(in   ) :: w(0 : *)
+
+      integer          :: j, j1, j2, j3, j4, j5, j6, j7, l
+      double precision :: wn4r, x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i
+      double precision :: y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i
+      double precision :: y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i
+
+      l = 2
+      if (n .gt. 16) then
+          call rsm_cft1st(n, a, w)
+          l = 16
+          do while (8 * l .lt. n)
+              call rsm_cftmdl(n, l, a, w)
+              l = 8 * l
+          end do
+      end if
+      if (4 * l .lt. n) then
+          wn4r = w(2)
+          do j = 0, l - 2, 2
+              j1 = j + l
+              j2 = j1 + l
+              j3 = j2 + l
+              j4 = j3 + l
+              j5 = j4 + l
+              j6 = j5 + l
+              j7 = j6 + l
+              x0r = a(j) + a(j1)
+              x0i = -a(j + 1) - a(j1 + 1)
+              x1r = a(j) - a(j1)
+              x1i = -a(j + 1) + a(j1 + 1)
+              x2r = a(j2) + a(j3)
+              x2i = a(j2 + 1) + a(j3 + 1)
+              x3r = a(j2) - a(j3)
+              x3i = a(j2 + 1) - a(j3 + 1)
+              y0r = x0r + x2r
+              y0i = x0i - x2i
+              y2r = x0r - x2r
+              y2i = x0i + x2i
+              y1r = x1r - x3i
+              y1i = x1i - x3r
+              y3r = x1r + x3i
+              y3i = x1i + x3r
+              x0r = a(j4) + a(j5)
+              x0i = a(j4 + 1) + a(j5 + 1)
+              x1r = a(j4) - a(j5)
+              x1i = a(j4 + 1) - a(j5 + 1)
+              x2r = a(j6) + a(j7)
+              x2i = a(j6 + 1) + a(j7 + 1)
+              x3r = a(j6) - a(j7)
+              x3i = a(j6 + 1) - a(j7 + 1)
+              y4r = x0r + x2r
+              y4i = x0i + x2i
+              y6r = x0r - x2r
+              y6i = x0i - x2i
+              x0r = x1r - x3i
+              x0i = x1i + x3r
+              x2r = x1r + x3i
+              x2i = x1i - x3r
+              y5r = wn4r * (x0r - x0i)
+              y5i = wn4r * (x0r + x0i)
+              y7r = wn4r * (x2r - x2i)
+              y7i = wn4r * (x2r + x2i)
+              a(j1) = y1r + y5r
+              a(j1 + 1) = y1i - y5i
+              a(j5) = y1r - y5r
+              a(j5 + 1) = y1i + y5i
+              a(j3) = y3r - y7i
+              a(j3 + 1) = y3i - y7r
+              a(j7) = y3r + y7i
+              a(j7 + 1) = y3i + y7r
+              a(j) = y0r + y4r
+              a(j + 1) = y0i - y4i
+              a(j4) = y0r - y4r
+              a(j4 + 1) = y0i + y4i
+              a(j2) = y2r - y6i
+              a(j2 + 1) = y2i - y6r
+              a(j6) = y2r + y6i
+              a(j6 + 1) = y2i + y6r
+          end do
+      else if (4 * l .eq. n) then
+          do j = 0, l - 2, 2
+              j1 = j + l
+              j2 = j1 + l
+              j3 = j2 + l
+              x0r = a(j) + a(j1)
+              x0i = -a(j + 1) - a(j1 + 1)
+              x1r = a(j) - a(j1)
+              x1i = -a(j + 1) + a(j1 + 1)
+              x2r = a(j2) + a(j3)
+              x2i = a(j2 + 1) + a(j3 + 1)
+              x3r = a(j2) - a(j3)
+              x3i = a(j2 + 1) - a(j3 + 1)
+              a(j) = x0r + x2r
+              a(j + 1) = x0i - x2i
+              a(j2) = x0r - x2r
+              a(j2 + 1) = x0i + x2i
+              a(j1) = x1r - x3i
+              a(j1 + 1) = x1i - x3r
+              a(j3) = x1r + x3i
+              a(j3 + 1) = x1i + x3r
+          end do
+      else
+          do j = 0, l - 2, 2
+              j1 = j + l
+              x0r = a(j) - a(j1)
+              x0i = -a(j + 1) + a(j1 + 1)
+              a(j) = a(j) + a(j1)
+              a(j + 1) = -a(j + 1) - a(j1 + 1)
+              a(j1) = x0r
+              a(j1 + 1) = x0i
+          end do
+      end if
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_CFT1ST
+C>
+C>    @brief   routines for FFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE CFT1ST
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length
+C>             A: input/output data
+C>             W: cos/sin table
+C>
+      subroutine rsm_cft1st(n, a, w)
+
+      implicit none
+
+      integer,          intent(in   ) :: n
+      double precision, intent(inout) :: a(0 : n - 1)
+      double precision, intent(in   ) :: w(0 : *)
+
+      integer          :: j, k1
+      double precision :: wn4r, wtmp, wk1r, wk1i, wk2r, wk2i, wk3r, wk3i
+      double precision :: wk4r, wk4i, wk5r, wk5i, wk6r, wk6i, wk7r, wk7i
+      double precision :: x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i
+      double precision :: y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i
+      double precision :: y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i
+
+      wn4r = w(2)
+      x0r = a(0) + a(2)
+      x0i = a(1) + a(3)
+      x1r = a(0) - a(2)
+      x1i = a(1) - a(3)
+      x2r = a(4) + a(6)
+      x2i = a(5) + a(7)
+      x3r = a(4) - a(6)
+      x3i = a(5) - a(7)
+      y0r = x0r + x2r
+      y0i = x0i + x2i
+      y2r = x0r - x2r
+      y2i = x0i - x2i
+      y1r = x1r - x3i
+      y1i = x1i + x3r
+      y3r = x1r + x3i
+      y3i = x1i - x3r
+      x0r = a(8) + a(10)
+      x0i = a(9) + a(11)
+      x1r = a(8) - a(10)
+      x1i = a(9) - a(11)
+      x2r = a(12) + a(14)
+      x2i = a(13) + a(15)
+      x3r = a(12) - a(14)
+      x3i = a(13) - a(15)
+      y4r = x0r + x2r
+      y4i = x0i + x2i
+      y6r = x0r - x2r
+      y6i = x0i - x2i
+      x0r = x1r - x3i
+      x0i = x1i + x3r
+      x2r = x1r + x3i
+      x2i = x1i - x3r
+      y5r = wn4r * (x0r - x0i)
+      y5i = wn4r * (x0r + x0i)
+      y7r = wn4r * (x2r - x2i)
+      y7i = wn4r * (x2r + x2i)
+      a(2) = y1r + y5r
+      a(3) = y1i + y5i
+      a(10) = y1r - y5r
+      a(11) = y1i - y5i
+      a(6) = y3r - y7i
+      a(7) = y3i + y7r
+      a(14) = y3r + y7i
+      a(15) = y3i - y7r
+      a(0) = y0r + y4r
+      a(1) = y0i + y4i
+      a(8) = y0r - y4r
+      a(9) = y0i - y4i
+      a(4) = y2r - y6i
+      a(5) = y2i + y6r
+      a(12) = y2r + y6i
+      a(13) = y2i - y6r
+      if (n .gt. 16) then
+          wk1r = w(4)
+          wk1i = w(5)
+          x0r = a(16) + a(18)
+          x0i = a(17) + a(19)
+          x1r = a(16) - a(18)
+          x1i = a(17) - a(19)
+          x2r = a(20) + a(22)
+          x2i = a(21) + a(23)
+          x3r = a(20) - a(22)
+          x3i = a(21) - a(23)
+          y0r = x0r + x2r
+          y0i = x0i + x2i
+          y2r = x0r - x2r
+          y2i = x0i - x2i
+          y1r = x1r - x3i
+          y1i = x1i + x3r
+          y3r = x1r + x3i
+          y3i = x1i - x3r
+          x0r = a(24) + a(26)
+          x0i = a(25) + a(27)
+          x1r = a(24) - a(26)
+          x1i = a(25) - a(27)
+          x2r = a(28) + a(30)
+          x2i = a(29) + a(31)
+          x3r = a(28) - a(30)
+          x3i = a(29) - a(31)
+          y4r = x0r + x2r
+          y4i = x0i + x2i
+          y6r = x0r - x2r
+          y6i = x0i - x2i
+          x0r = x1r - x3i
+          x0i = x1i + x3r
+          x2r = x1r + x3i
+          x2i = x3r - x1i
+          y5r = wk1i * x0r - wk1r * x0i
+          y5i = wk1i * x0i + wk1r * x0r
+          y7r = wk1r * x2r + wk1i * x2i
+          y7i = wk1r * x2i - wk1i * x2r
+          x0r = wk1r * y1r - wk1i * y1i
+          x0i = wk1r * y1i + wk1i * y1r
+          a(18) = x0r + y5r
+          a(19) = x0i + y5i
+          a(26) = y5i - x0i
+          a(27) = x0r - y5r
+          x0r = wk1i * y3r - wk1r * y3i
+          x0i = wk1i * y3i + wk1r * y3r
+          a(22) = x0r - y7r
+          a(23) = x0i + y7i
+          a(30) = y7i - x0i
+          a(31) = x0r + y7r
+          a(16) = y0r + y4r
+          a(17) = y0i + y4i
+          a(24) = y4i - y0i
+          a(25) = y0r - y4r
+          x0r = y2r - y6i
+          x0i = y2i + y6r
+          a(20) = wn4r * (x0r - x0i)
+          a(21) = wn4r * (x0i + x0r)
+          x0r = y6r - y2i
+          x0i = y2r + y6i
+          a(28) = wn4r * (x0r - x0i)
+          a(29) = wn4r * (x0i + x0r)
+          k1 = 4
+          do j = 32, n - 16, 16
+              k1 = k1 + 4
+              wk1r = w(k1)
+              wk1i = w(k1 + 1)
+              wk2r = w(k1 + 2)
+              wk2i = w(k1 + 3)
+              wtmp = 2 * wk2i
+              wk3r = wk1r - wtmp * wk1i
+              wk3i = wtmp * wk1r - wk1i
+              wk4r = 1 - wtmp * wk2i
+              wk4i = wtmp * wk2r
+              wtmp = 2 * wk4i
+              wk5r = wk3r - wtmp * wk1i
+              wk5i = wtmp * wk1r - wk3i
+              wk6r = wk2r - wtmp * wk2i
+              wk6i = wtmp * wk2r - wk2i
+              wk7r = wk1r - wtmp * wk3i
+              wk7i = wtmp * wk3r - wk1i
+              x0r = a(j) + a(j + 2)
+              x0i = a(j + 1) + a(j + 3)
+              x1r = a(j) - a(j + 2)
+              x1i = a(j + 1) - a(j + 3)
+              x2r = a(j + 4) + a(j + 6)
+              x2i = a(j + 5) + a(j + 7)
+              x3r = a(j + 4) - a(j + 6)
+              x3i = a(j + 5) - a(j + 7)
+              y0r = x0r + x2r
+              y0i = x0i + x2i
+              y2r = x0r - x2r
+              y2i = x0i - x2i
+              y1r = x1r - x3i
+              y1i = x1i + x3r
+              y3r = x1r + x3i
+              y3i = x1i - x3r
+              x0r = a(j + 8) + a(j + 10)
+              x0i = a(j + 9) + a(j + 11)
+              x1r = a(j + 8) - a(j + 10)
+              x1i = a(j + 9) - a(j + 11)
+              x2r = a(j + 12) + a(j + 14)
+              x2i = a(j + 13) + a(j + 15)
+              x3r = a(j + 12) - a(j + 14)
+              x3i = a(j + 13) - a(j + 15)
+              y4r = x0r + x2r
+              y4i = x0i + x2i
+              y6r = x0r - x2r
+              y6i = x0i - x2i
+              x0r = x1r - x3i
+              x0i = x1i + x3r
+              x2r = x1r + x3i
+              x2i = x1i - x3r
+              y5r = wn4r * (x0r - x0i)
+              y5i = wn4r * (x0r + x0i)
+              y7r = wn4r * (x2r - x2i)
+              y7i = wn4r * (x2r + x2i)
+              x0r = y1r + y5r
+              x0i = y1i + y5i
+              a(j + 2) = wk1r * x0r - wk1i * x0i
+              a(j + 3) = wk1r * x0i + wk1i * x0r
+              x0r = y1r - y5r
+              x0i = y1i - y5i
+              a(j + 10) = wk5r * x0r - wk5i * x0i
+              a(j + 11) = wk5r * x0i + wk5i * x0r
+              x0r = y3r - y7i
+              x0i = y3i + y7r
+              a(j + 6) = wk3r * x0r - wk3i * x0i
+              a(j + 7) = wk3r * x0i + wk3i * x0r
+              x0r = y3r + y7i
+              x0i = y3i - y7r
+              a(j + 14) = wk7r * x0r - wk7i * x0i
+              a(j + 15) = wk7r * x0i + wk7i * x0r
+              a(j) = y0r + y4r
+              a(j + 1) = y0i + y4i
+              x0r = y0r - y4r
+              x0i = y0i - y4i
+              a(j + 8) = wk4r * x0r - wk4i * x0i
+              a(j + 9) = wk4r * x0i + wk4i * x0r
+              x0r = y2r - y6i
+              x0i = y2i + y6r
+              a(j + 4) = wk2r * x0r - wk2i * x0i
+              a(j + 5) = wk2r * x0i + wk2i * x0r
+              x0r = y2r + y6i
+              x0i = y2i - y6r
+              a(j + 12) = wk6r * x0r - wk6i * x0i
+              a(j + 13) = wk6r * x0i + wk6i * x0r
+          end do
+      end if
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_CFTMDL
+C>
+C>    @brief   routines for FFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE CFTMDL
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length
+C>             L: parameter defined in rsm_cftfsub & rsm_cftbsub
+C>             A: input/output data
+C>             W: cos/sin table
+C>
+      subroutine rsm_cftmdl(n, l, a, w)
+
+      implicit none
+
+      integer,          intent(in   ) :: n, l
+      double precision, intent(inout) :: a(0 : n - 1)
+      double precision, intent(in   ) :: w(0 : *)
+
+      integer          :: j, j1, j2, j3, j4, j5, j6, j7, k, k1, m
+      double precision :: wn4r, wtmp, wk1r, wk1i, wk2r, wk2i, wk3r, wk3i
+      double precision :: wk4r, wk4i, wk5r, wk5i, wk6r, wk6i, wk7r, wk7i
+      double precision :: x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i
+      double precision :: y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i
+      double precision :: y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i
+
+      m = 8 * l
+      wn4r = w(2)
+      do j = 0, l - 2, 2
+          j1 = j + l
+          j2 = j1 + l
+          j3 = j2 + l
+          j4 = j3 + l
+          j5 = j4 + l
+          j6 = j5 + l
+          j7 = j6 + l
+          x0r = a(j) + a(j1)
+          x0i = a(j + 1) + a(j1 + 1)
+          x1r = a(j) - a(j1)
+          x1i = a(j + 1) - a(j1 + 1)
+          x2r = a(j2) + a(j3)
+          x2i = a(j2 + 1) + a(j3 + 1)
+          x3r = a(j2) - a(j3)
+          x3i = a(j2 + 1) - a(j3 + 1)
+          y0r = x0r + x2r
+          y0i = x0i + x2i
+          y2r = x0r - x2r
+          y2i = x0i - x2i
+          y1r = x1r - x3i
+          y1i = x1i + x3r
+          y3r = x1r + x3i
+          y3i = x1i - x3r
+          x0r = a(j4) + a(j5)
+          x0i = a(j4 + 1) + a(j5 + 1)
+          x1r = a(j4) - a(j5)
+          x1i = a(j4 + 1) - a(j5 + 1)
+          x2r = a(j6) + a(j7)
+          x2i = a(j6 + 1) + a(j7 + 1)
+          x3r = a(j6) - a(j7)
+          x3i = a(j6 + 1) - a(j7 + 1)
+          y4r = x0r + x2r
+          y4i = x0i + x2i
+          y6r = x0r - x2r
+          y6i = x0i - x2i
+          x0r = x1r - x3i
+          x0i = x1i + x3r
+          x2r = x1r + x3i
+          x2i = x1i - x3r
+          y5r = wn4r * (x0r - x0i)
+          y5i = wn4r * (x0r + x0i)
+          y7r = wn4r * (x2r - x2i)
+          y7i = wn4r * (x2r + x2i)
+          a(j1) = y1r + y5r
+          a(j1 + 1) = y1i + y5i
+          a(j5) = y1r - y5r
+          a(j5 + 1) = y1i - y5i
+          a(j3) = y3r - y7i
+          a(j3 + 1) = y3i + y7r
+          a(j7) = y3r + y7i
+          a(j7 + 1) = y3i - y7r
+          a(j) = y0r + y4r
+          a(j + 1) = y0i + y4i
+          a(j4) = y0r - y4r
+          a(j4 + 1) = y0i - y4i
+          a(j2) = y2r - y6i
+          a(j2 + 1) = y2i + y6r
+          a(j6) = y2r + y6i
+          a(j6 + 1) = y2i - y6r
+      end do
+      if (m .lt. n) then
+          wk1r = w(4)
+          wk1i = w(5)
+          do j = m, l + m - 2, 2
+              j1 = j + l
+              j2 = j1 + l
+              j3 = j2 + l
+              j4 = j3 + l
+              j5 = j4 + l
+              j6 = j5 + l
+              j7 = j6 + l
+              x0r = a(j) + a(j1)
+              x0i = a(j + 1) + a(j1 + 1)
+              x1r = a(j) - a(j1)
+              x1i = a(j + 1) - a(j1 + 1)
+              x2r = a(j2) + a(j3)
+              x2i = a(j2 + 1) + a(j3 + 1)
+              x3r = a(j2) - a(j3)
+              x3i = a(j2 + 1) - a(j3 + 1)
+              y0r = x0r + x2r
+              y0i = x0i + x2i
+              y2r = x0r - x2r
+              y2i = x0i - x2i
+              y1r = x1r - x3i
+              y1i = x1i + x3r
+              y3r = x1r + x3i
+              y3i = x1i - x3r
+              x0r = a(j4) + a(j5)
+              x0i = a(j4 + 1) + a(j5 + 1)
+              x1r = a(j4) - a(j5)
+              x1i = a(j4 + 1) - a(j5 + 1)
+              x2r = a(j6) + a(j7)
+              x2i = a(j6 + 1) + a(j7 + 1)
+              x3r = a(j6) - a(j7)
+              x3i = a(j6 + 1) - a(j7 + 1)
+              y4r = x0r + x2r
+              y4i = x0i + x2i
+              y6r = x0r - x2r
+              y6i = x0i - x2i
+              x0r = x1r - x3i
+              x0i = x1i + x3r
+              x2r = x1r + x3i
+              x2i = x3r - x1i
+              y5r = wk1i * x0r - wk1r * x0i
+              y5i = wk1i * x0i + wk1r * x0r
+              y7r = wk1r * x2r + wk1i * x2i
+              y7i = wk1r * x2i - wk1i * x2r
+              x0r = wk1r * y1r - wk1i * y1i
+              x0i = wk1r * y1i + wk1i * y1r
+              a(j1) = x0r + y5r
+              a(j1 + 1) = x0i + y5i
+              a(j5) = y5i - x0i
+              a(j5 + 1) = x0r - y5r
+              x0r = wk1i * y3r - wk1r * y3i
+              x0i = wk1i * y3i + wk1r * y3r
+              a(j3) = x0r - y7r
+              a(j3 + 1) = x0i + y7i
+              a(j7) = y7i - x0i
+              a(j7 + 1) = x0r + y7r
+              a(j) = y0r + y4r
+              a(j + 1) = y0i + y4i
+              a(j4) = y4i - y0i
+              a(j4 + 1) = y0r - y4r
+              x0r = y2r - y6i
+              x0i = y2i + y6r
+              a(j2) = wn4r * (x0r - x0i)
+              a(j2 + 1) = wn4r * (x0i + x0r)
+              x0r = y6r - y2i
+              x0i = y2r + y6i
+              a(j6) = wn4r * (x0r - x0i)
+              a(j6 + 1) = wn4r * (x0i + x0r)
+          end do
+          k1 = 4
+          do k = 2 * m, n - m, m
+              k1 = k1 + 4
+              wk1r = w(k1)
+              wk1i = w(k1 + 1)
+              wk2r = w(k1 + 2)
+              wk2i = w(k1 + 3)
+              wtmp = 2 * wk2i
+              wk3r = wk1r - wtmp * wk1i
+              wk3i = wtmp * wk1r - wk1i
+              wk4r = 1 - wtmp * wk2i
+              wk4i = wtmp * wk2r
+              wtmp = 2 * wk4i
+              wk5r = wk3r - wtmp * wk1i
+              wk5i = wtmp * wk1r - wk3i
+              wk6r = wk2r - wtmp * wk2i
+              wk6i = wtmp * wk2r - wk2i
+              wk7r = wk1r - wtmp * wk3i
+              wk7i = wtmp * wk3r - wk1i
+              do j = k, l + k - 2, 2
+                  j1 = j + l
+                  j2 = j1 + l
+                  j3 = j2 + l
+                  j4 = j3 + l
+                  j5 = j4 + l
+                  j6 = j5 + l
+                  j7 = j6 + l
+                  x0r = a(j) + a(j1)
+                  x0i = a(j + 1) + a(j1 + 1)
+                  x1r = a(j) - a(j1)
+                  x1i = a(j + 1) - a(j1 + 1)
+                  x2r = a(j2) + a(j3)
+                  x2i = a(j2 + 1) + a(j3 + 1)
+                  x3r = a(j2) - a(j3)
+                  x3i = a(j2 + 1) - a(j3 + 1)
+                  y0r = x0r + x2r
+                  y0i = x0i + x2i
+                  y2r = x0r - x2r
+                  y2i = x0i - x2i
+                  y1r = x1r - x3i
+                  y1i = x1i + x3r
+                  y3r = x1r + x3i
+                  y3i = x1i - x3r
+                  x0r = a(j4) + a(j5)
+                  x0i = a(j4 + 1) + a(j5 + 1)
+                  x1r = a(j4) - a(j5)
+                  x1i = a(j4 + 1) - a(j5 + 1)
+                  x2r = a(j6) + a(j7)
+                  x2i = a(j6 + 1) + a(j7 + 1)
+                  x3r = a(j6) - a(j7)
+                  x3i = a(j6 + 1) - a(j7 + 1)
+                  y4r = x0r + x2r
+                  y4i = x0i + x2i
+                  y6r = x0r - x2r
+                  y6i = x0i - x2i
+                  x0r = x1r - x3i
+                  x0i = x1i + x3r
+                  x2r = x1r + x3i
+                  x2i = x1i - x3r
+                  y5r = wn4r * (x0r - x0i)
+                  y5i = wn4r * (x0r + x0i)
+                  y7r = wn4r * (x2r - x2i)
+                  y7i = wn4r * (x2r + x2i)
+                  x0r = y1r + y5r
+                  x0i = y1i + y5i
+                  a(j1) = wk1r * x0r - wk1i * x0i
+                  a(j1 + 1) = wk1r * x0i + wk1i * x0r
+                  x0r = y1r - y5r
+                  x0i = y1i - y5i
+                  a(j5) = wk5r * x0r - wk5i * x0i
+                  a(j5 + 1) = wk5r * x0i + wk5i * x0r
+                  x0r = y3r - y7i
+                  x0i = y3i + y7r
+                  a(j3) = wk3r * x0r - wk3i * x0i
+                  a(j3 + 1) = wk3r * x0i + wk3i * x0r
+                  x0r = y3r + y7i
+                  x0i = y3i - y7r
+                  a(j7) = wk7r * x0r - wk7i * x0i
+                  a(j7 + 1) = wk7r * x0i + wk7i * x0r
+                  a(j) = y0r + y4r
+                  a(j + 1) = y0i + y4i
+                  x0r = y0r - y4r
+                  x0i = y0i - y4i
+                  a(j4) = wk4r * x0r - wk4i * x0i
+                  a(j4 + 1) = wk4r * x0i + wk4i * x0r
+                  x0r = y2r - y6i
+                  x0i = y2i + y6r
+                  a(j2) = wk2r * x0r - wk2i * x0i
+                  a(j2 + 1) = wk2r * x0i + wk2i * x0r
+                  x0r = y2r + y6i
+                  x0i = y2i - y6r
+                  a(j6) = wk6r * x0r - wk6i * x0i
+                  a(j6 + 1) = wk6r * x0i + wk6i * x0r
+              end do
+          end do
+      end if
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_RFTFSUB
+C>
+C>    @brief   routines for FFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE RFTFSUB
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length
+C>             A: input/output data
+C>             NC: size of the cos/sin table
+C>             C: cos/sin table
+C>
+      subroutine rsm_rftfsub(n, a, nc, c)
+
+      implicit none
+
+      integer,          intent(in   ) :: n, nc
+      double precision, intent(inout) :: a(0 : n - 1)
+      double precision, intent(in   ) :: c(0 : nc - 1)
+
+      integer          :: j, k, kk, ks, m
+      double precision :: wkr, wki, xr, xi, yr, yi
+
+      m = n / 2
+      ks = 2 * nc / m
+      kk = 0
+      do j = 2, m - 2, 2
+          k = n - j
+          kk = kk + ks
+          wkr = 0.5d+00 - c(nc - kk)
+          wki = c(kk)
+          xr = a(j) - a(k)
+          xi = a(j + 1) + a(k + 1)
+          yr = wkr * xr - wki * xi
+          yi = wkr * xi + wki * xr
+          a(j) = a(j) - yr
+          a(j + 1) = a(j + 1) - yi
+          a(k) = a(k) + yr
+          a(k + 1) = a(k + 1) - yi
+      end do
+      end
+C*MODULE RSM_FFTDRV  *DECK RSM_DSTSUB
+C>
+C>    @brief   routines for FFT
+C>             (https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html)
+C>             Slightly modified version of SUBROUTINE DSTSUB
+C>
+C>    @author  Takuya Ooura
+C>
+C>    @param   N: data length
+C>             A: input/output data
+C>             NC: size of the cos/sin table
+C>             C: cos/sin table
+C>
+      subroutine rsm_dstsub(n, a, nc, c)
+
+      implicit none
+
+      integer,          intent(in   ) :: n, nc
+      double precision, intent(inout) :: a(0 : n - 1)
+      double precision, intent(in   ) :: c(0 : nc - 1)
+
+      integer          :: j, k, kk, ks, m
+      double precision :: wkr, wki, xr
+
+      m = n / 2
+      ks = nc / n
+      kk = 0
+      do j = 1, m - 1
+          k = n - j
+          kk = kk + ks
+          wkr = c(kk) - c(nc - kk)
+          wki = c(kk) + c(nc - kk)
+          xr = wki * a(k) - wkr * a(j)
+          a(k) = wkr * a(k) + wki * a(j)
+          a(j) = xr
+      end do
+      a(m) = c(0) * a(m)
+      end

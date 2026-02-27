@@ -1,0 +1,266 @@
+C*MODULE RSM_GMS_CONICL  *DECK RSM_MODENG
+C>
+C>    @brief   modify the nergies for the conical intersection search
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IXSTAT: array of two states whose CI point is sought
+C>             NAT: the number of atoms
+C>             TDDFTYP: type of TDDFT calculation
+C>             ENG1: energy of the state 1
+C>             ENG2: energy of the state 2
+C>             EG1: gradient of the state 1
+C>             EG2: gradient of the state 2
+C>
+      SUBROUTINE RSM_MODENG(IXSTAT,NAT,TDDFTYP,ENG1,ENG2,EG1,EG2)
+C
+      use mx_limits, only : mxatm
+
+      USE RISM_IO,   ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,    ONLY : IRISM, RSM_SCF_PUTPAR, ITDDFT, NROOT, ISPEC,
+     *                      ISKIP_RSM, RSM_SCF_SETPAR, NSERCH, EINT1,
+     *                      EINT2, EINT3, TDTYP, IEQ
+      USE RISM_MOD,  ONLY : RSM_SETENE, EUU, EUV_E2
+C
+      IMPLICIT NONE
+C
+C     GAMESS
+C
+      DOUBLE PRECISION :: ENERGY, EG
+      COMMON /FUNCT / ENERGY,EG(3*MXATM)
+
+      INTEGER :: IR, IW, IP, IJKO, IJKT, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IJKO,IJKT,IDAF,NAV,IODA(950)
+C
+      INTEGER,          INTENT(IN   ) :: IXSTAT(*), NAT
+      DOUBLE PRECISION, INTENT(IN   ) :: TDDFTYP
+      DOUBLE PRECISION, INTENT(  OUT) :: ENG1, ENG2, EG1(*), EG2(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: WRK(:)
+      DOUBLE PRECISION                :: EINT4, VAL
+
+      INTEGER                :: I
+C
+C     CHECK RISM CALCULATION
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+C
+      CALL RSM_SETENE
+C
+      ALLOCATE(WRK(3*NAT))
+C
+C     ENERGY
+C
+      EINT4 = EUU + EUV_E2
+
+      ENG2 = 0.5D+00*(EINT2 + EINT3)
+      ENG1 = 0.5D+00*(EINT1 + EINT4)
+
+      CALL DAREAD(IDAF,IODA,WRK,3*NAT,497,0)  ! EG1
+      DO I=1,3*NAT
+        EG1(I) = 0.5D+00*(WRK(I) + EG(I))
+      ENDDO
+
+      CALL RSM_DARE(WRK,3*NAT,70,0) ! EG2
+      DO I=1,3*NAT
+        EG2(I) = 0.5D+00*WRK(I)
+      ENDDO
+      CALL RSM_DARE(WRK,3*NAT,71,0) ! EG3
+      DO I=1,3*NAT
+        EG2(I) = EG2(I) + 0.5D+00*WRK(I)
+      ENDDO
+C
+C     ENG1 <= ENG2
+C
+      IF(ENG1 > ENG2) THEN
+        VAL = ENG1
+        ENG1 = ENG2
+        ENG2 = VAL
+
+        DO I=1,3*NAT
+          VAL = EG1(I)
+          EG1(I) = EG2(I)
+          EG2(I) = VAL
+        ENDDO
+      ENDIF
+C
+C     CHANGE IEQ FROM 2 to 0
+C
+      IEQ = 0
+C
+C
+C
+      DEALLOCATE(WRK)
+C
+      CALL RSM_SCF_PUTPAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_CONICL  *DECK RSM_CNCLT
+C>
+C>    @brief   switch TDDFTYP for the conical intersection search
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NRUN: the number of CI search calculations 
+C>             NEG2CL: gradients are obtained by 
+C>                     (0: A SINGLE CALCULATION (SA-MCSCF), 
+C>                      +1/-1: TWO SEPARATE CALCULATIONS (TDDFT))
+C>             IXROOT: array of two states whose CI point is sought
+C>             NAT: the number of atoms
+C>
+
+      SUBROUTINE RSM_CNCLTD2(NRUN,NEG2CL,IXROOT,NAT)
+C
+      use mx_limits, only : mxatm
+C
+      USE RISM_IO,   ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,    ONLY : IRISM, RSM_SCF_PUTPAR, ITDDFT, NROOT, ISPEC,
+     *                      ISKIP_RSM, RSM_SCF_SETPAR, NSERCH, EINT1,
+     *                      EINT2, EINT3, TDTYP
+
+      IMPLICIT NONE
+C
+C     GAMESS
+C
+      DOUBLE PRECISION :: E, EG
+      COMMON /FUNCT / E,EG(3*MXATM)
+
+      DOUBLE PRECISION :: CNVTOL, PFREQ 
+      INTEGER :: JANST, NRADT, NTHET, NPHIT, NLEBT, NSTAT, NTRIAL,
+     *           MAXVEC, NTHST, IRECTD, ITDFG, ITDPRP, NONEQR, MODTD
+      LOGICAL :: TRIPLET,SG1T,TAMMD,TPA,ALPHKWD,BETAKWD
+      COMMON /INFOTD/ CNVTOL,PFREQ(2),MODTD,
+     *                JANST,NRADT,NTHET,NPHIT,NLEBT,
+     *                NSTAT,NTRIAL,MAXVEC,NTHST,IRECTD,ITDFG,ITDPRP,
+     *                TRIPLET,SG1T,NONEQR,TAMMD,TPA,ALPHKWD,BETAKWD
+
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      INTEGER :: MPLEVL, MPCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+
+      DOUBLE PRECISION :: RNONE
+      DATA RNONE/8HNONE    /
+C
+      INTEGER, INTENT(IN   ) :: NRUN, IXROOT(2), NAT
+      INTEGER, INTENT(  OUT) :: NEG2CL
+C
+C     
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SCF_SETPAR
+
+      IF(NRUN.EQ.2) THEN
+         NEG2CL = -1
+C
+C     ----- AFTER THE CALCULATION FOR THE 2ND STATE -----
+C
+C SAVE THE GRADIENT FOR THE 2ND STATE
+         CALL RSM_DAWR(EG,3*NAT,70,0)
+         CALL VCLR(EG,1,3*NAT)
+         CALL RSM_CLDA
+C
+         NTHST = IXROOT(2)
+C
+         CALL RSM_GETDAT4(2)
+      ELSE
+         NEG2CL = 1
+C
+         CALL RSM_DAWR(EG,3*NAT,71,0)
+         CALL VCLR(EG,1,3*NAT)
+C
+         IF(IXROOT(1).EQ.0) THEN
+C GROUND-STATE DFT
+            TDTYP = TDDFTYP
+            TDDFTYP = RNONE
+         ELSE
+            NTHST = IXROOT(1)
+         END IF
+
+         CALL RSM_SCF_PUTPAR
+         CALL RSM_CLDA
+C
+C        HARMONY
+C
+         CALL RSM_GETDAT4(3)
+      END IF
+C
+      RETURN
+      END
+
+C*MODULE RSM_GMS_CONICL  *DECK RSM_CONIADDLOOP
+C>
+C>    @brief   modify the the conical intersection search loop
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   EXETYP: run type
+C>             METHOD: optimization algorithm
+C>             NAT: the number of atoms
+C>             NPRT: print option
+C>             NPRTHS: hessian will be punched at every NPRTHS optimization steps
+C>             NEG2CL: gradients are obtained by
+C>                     (0: A SINGLE CALCULATION (SA-MCSCF),
+C>                      +1/-1: TWO SEPARATE CALCULATIONS (TDDFT))
+C>             IXROOT: array of two states whose CI point is sought
+C>
+      SUBROUTINE RSM_CONIADDLOOP(EXETYP,METHOD,NAT,NPRT,NPRTHS,NEG2CL,
+     *                        IXROOT)
+
+      USE RISM_IO,   ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,    ONLY : IRISM, RSM_SCF_PUTPAR, RSM_SCF_SETPAR, TDTYP
+      USE RISM_MOD,  ONLY : RSM_SETENE
+
+      IMPLICIT NONE
+C
+C     GAMESS
+C
+      DOUBLE PRECISION :: SCFTYP, VBTYP, DFTYPE, TDDFTYP, CITYP, CCTYP
+      INTEGER :: MPLEVL, MPCTYP
+      COMMON /WFNOPT/ SCFTYP,VBTYP,DFTYPE,TDDFTYP,CITYP,CCTYP,
+     *                MPLEVL,MPCTYP
+C
+      DOUBLE PRECISION, INTENT(IN   ) :: EXETYP, METHOD
+      INTEGER,          INTENT(IN   ) :: NAT, NPRT, NPRTHS, IXROOT(2)
+      INTEGER,          INTENT(INOUT) :: NEG2CL
+C
+C     CHECK RISM CALCULATION
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+      IF(IRISM /= 0) RETURN
+C
+C     ADDITIONAL LOOP
+C
+      CALL RSM_CNCLTD2(2,NEG2CL,IXROOT,NAT)
+      CALL SIGVAL(EXETYP,3*NAT,METHOD,NPRT,NPRTHS)
+
+      CALL RSM_CNCLTD2(3,NEG2CL,IXROOT,NAT)
+      CALL SIGVAL(EXETYP,3*NAT,METHOD,NPRT,NPRTHS)
+
+
+      IF(IXROOT(1).EQ.0) TDDFTYP = TDTYP
+C
+      RETURN
+      END
+

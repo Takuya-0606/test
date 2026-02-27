@@ -1,0 +1,669 @@
+C*MODULE RSM_MAIN  *DECK RSM_STRT
+C>
+C>    @brief   store the parameters for RISM calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_STRT
+
+      USE RISM_IO,  ONLY : IR, IW
+      USE RISM_MOD, ONLY : NSHEL0A, IGRD_TYP, MASWRK, RSM_PUTPAR, 
+     *                     RSM_PUTENE
+      USE FFT_MOD,  ONLY : RSM_SETFFT_UN, RSM_SETFFT_LN
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RSMSED,   ONLY : NSERCH, ITRRSM, IEQ
+
+      IMPLICIT NONE
+C
+      INTEGER :: IERR
+C
+C     DIRECT ACCESS FILE, FILE 50.
+C
+C     TYPE  RECORD  CONTENT  SIZE
+C     ----  ------  -------  ----
+C     D      1      SGU      NU
+C     D      2      QU       NU
+C     D      3      QV       NV
+C     D      4      DENV     NV
+C     D      5      VSITE    NV
+C     D      6      VPRE     NUM3
+C     D      7      DMAT     NUM3
+C     D      8      RTAB     NTAB (=1+NGRID for EQ, NRAD for LN)
+C     D      9      RKTAB    NTAB
+C
+C     D     11      HWV      (NGRID+1)*NV*NV or NRAD*NV*NV
+C     D     12      FNEP     (NGRID+1)*NU*NV or NRAD*NU*NV (Repulsive)
+C     D     13      PA       NUM*(NUM+1)/2
+C     D     14      PB       NUM*(NUM+1)/2
+C     D     15      FCK(V)   NUM*(NUM+1)/2     !  Solvated Fock
+C     D     16      ET0      (NGRID+1)*NU*NV
+C     D     17      CSB      (NGRID+1)*NU*NV
+C     D     18      FQLK     (NGRID+1)*NU*NV
+C     D     19      FQS      (NGRID+1)*NU*NV
+C     D     20      BRG      NTAB*NU*NV
+C     D     21      HREF     NTAB*NU*NV
+C     D     22      HKREF    NTAB*NU*NV
+C  
+C     D     24      DMT      NQMT0A+1            ! New fitting
+C    
+C     D     26      INDU     NU*NV
+C     D     27      INDV     NU*NV
+C     D     28      IJUV     NU*NV
+C
+C     D     39      XMAT     NQMT0A*NQMT0A
+C
+C     D     41      QMAT     NUM3P*NUM3P       ! New fitting
+C     D     42      XMAT[x]  NSHEL0A*NSHEL0A*3*NAT
+C     D     43      SMAT     NUM*(NUM+1)/2     ! Overlap matrix
+C     D     45      ZMAT     NQMT0A
+C
+C     D     47      WU       (NGRID+1)*NU*NU
+C     D     48      RSMDIP   3                 ! Dipole moment induced by solvent
+C
+C     D     60      V1       NQMT0A*NQMT0A     ! CPHF_MP2
+C     D     61      V2       NQMT0A*3*NAT      ! CPHF_MP2 & CPHF
+C     D     62      DER (EG) 3*NAT             ! CPHF_MP2 & CPHF
+C     D     63      DE       NTAB*NU*NV        ! CPHF
+C     D     64      EH       3*NAT*3*NAT       ! CPHF  
+C     D     65      V1B      NQMT0A*NQMT0A     ! CPHF
+C
+C     D     70      EG2      3*NAT             ! CONICAL INTERSECTION SERCH 
+C     D     71      EG3      3*NAT             ! CONICAL INTERSECTION SERCH
+C     ------
+C      ESPD
+C     ------
+C     D      90     DMT1     NSHEL
+C     D      91     DMT3     NSHEL
+C     D      92     DMT4     NSHEL
+C     D      93     QMOM1    
+C     D      94     DMT0B    NSHEL2B (SOLVENT)
+C     D      95     ZANB     NV
+C     D      96     VDUM     NRAD*NV*NSHEL9
+C     D      97     ESPV     NRAD*NV*NU  (solvent part)
+C     D      98     DMT0     NSHEL0A
+C     D      99     ZMTA     NSHEL0A 
+C     D     100     ZMTB     NSHEL2B
+C     D     101     DMT2     NSHEL
+C     D     103     TRNQ     NSHEL0A*NSHEL0A
+C
+C     D     110     XXXX     YYYYYYYYYYYYYYY (SHIMIZU)
+C     D     111     FCVAO    NUM*(NUM+1)/2   (SA-CASSCF)
+C     D     112     GIJ      NACT*(NACT+1)/2 (SA-CASSCF)
+C     D     113     DMTA                     (SA-CASSCF)
+C     D     114     FCVMO    NUM*(NUM+1)/2   (SA-CASSCF) 
+C
+C     -----------
+C     MODULE DATA
+C     -----------
+C
+C     ---------- IO DATA ----------
+C
+C     I     501     IR,IW,IP 1
+C
+C     ---------- MOL DATA ---------
+C
+C     I     511     INFOMAT  1
+C     I     518     IAN      NAT
+C     I     519     IZCORE   NAT
+C     D     520     ZAN      NAT
+C     D     521     C        3*NAT
+C     D     522     ANAM     NAT
+C     D     523     DE       3*NAT
+C
+C     ---------- BASIS DATA ----------
+C
+C                   NORM, MXANG, 
+C     I     531     IPURED, 
+C                   IPUREF   1
+C     I     532     NSHELL   1
+C     I     533     NPRIM    1
+C     I     534     KSTART   NSHELL
+C     I     535     KATOM    NSHELL
+C     I     536     KTYPE    NSHELL
+C     I     537     KNG      NSHELL
+C     I     538     KLOC     NSHELL
+C     I     539     KMIN     NSHELL
+C     I     540     KMAX     NSHELL
+C     D     541     EX       NPRIM
+C     D     542     CS       NPRIM
+C     D     543     CP       NPRIM
+C     D     544     CD       NPRIM
+C     D     545     CF       NPRIM
+C     D     546     CG       NPRIM
+C     D     547     CH       NPRIM
+C     D     548     CI       NPRIM
+C
+C     ---------- RISM MODULE -----------
+C     
+C     I     551     NU, NV   1
+C     I     552     NTAB     1
+C     I     553     NSHEL0A  1
+C     I     554     IGRD_TYP 1
+C     D     555     ALPA     1
+C     D     556     CLTYP    1
+C     I     557     IRSM_DAMP,
+C                   IREST,
+C                   JDIIS    1
+C     I     558     NEXP     1
+C     I     559     MXDIIS   1
+C     D     560     DELEX    1
+C     D     561     XMN      1
+C     D     562     THR      1
+C     D     563     BETA     1
+C     D     564     FREF     1
+C     D     565     FPT      1
+C     D     566     FCH0     1
+C     D     567     RMX_SYMP 1
+C     D     568     RKMX_SYMP1
+C     D     569     EBOX     10
+C     I     570     IROOT    1
+C     D     571     EDIFMX   1
+C     I     572     THFLUC   1
+C     D     573     RMAX     1
+C
+C     ---------- ABS MODULE ----------
+C
+C     I     576     MXG      1
+C     I     577     MXS      1 
+C     I     578     NSHEL0A  1 
+C     I     579     NQMT0A   1
+C     I     580     JABS     1
+C     D     581     QMTTOL   1
+C     I     582     KSTRT0A  MXS
+C     I     583     KATM0A   MXS  
+C     I     584     KTYP0A   MXS
+C     I     585     KNG0A    MXS
+C     I     586     KLOC0A   MXS 
+C     I     587     KMIN0A   MXS
+C     I     588     KMAX0A   MXS
+C     D     589     EX0A     MXG
+C     D     590     COF0A    MXG
+C     I     591     KATM_QMT0A MXS
+C     D     592     TQ         NSHEL0A*NSHEL0A
+C     D     593     TRN1     90
+C     D     594     TRN2     90
+C     D     595     TRN3     100
+C     I     596     NRAD     1
+C     I     597     NMUESP
+C                   NMUREP   1
+C     I     598     IFITU    1
+C     D     599     XMNFIT   1
+C     D     600     XMUMX    1
+C     D     601     FMAT     NQMT0A*NRAD
+C     I     602     MXANG_ABS 1
+C
+C     ---------- FFT MODULE (UN/LN) ----------
+C   
+C     I/I   611     LIP_UN/LIP_LN 1
+C     I/D   612     LT_UN /DT     1  
+C     I/D   613     LW_UN /TPFOR  1
+C     D/D   614     FACTFR/TPRV   1
+C     D/    615     FACTBK/
+C
+C     ---------- RSMSED MODULE -----------
+C
+C     I     621     ICNTRL(12)    1
+C     D     624     RCNTRL(2)     1
+  
+      CALL RSM_CPYLGT(IW)
+C
+C     NSERCH 
+C
+      NSERCH = 0
+      ITRRSM = -1
+C
+C     READ RISMCN
+C
+      IERR = 0
+      CALL RSM_UNCN(IR,IW,IERR)
+      IF(IERR == 0) THEN
+C
+C       UNIFORM GRID 
+C
+        IGRD_TYP = 0
+      ELSE
+        IERR = 0
+        CALL RSM_LNCN(IR,IW,IERR)
+
+        IF(IERR == 0) THEN
+          IGRD_TYP = 1
+        ELSE
+          STOP
+        ENDIF
+      ENDIF
+C
+C     READ INPUT FOR SEDD
+C
+      CALL RSM_FITINP(IR,MASWRK)
+C
+C     Prepare ABS
+C
+      CALL RSM_ABSIN(MASWRK,IR,IW,NSHEL0A)
+      CALL RSM_SETABS
+C
+C     Print ABS
+C
+      CALL RSM_PRTABS(IW,MASWRK)
+C
+C     PREPARE NON ELECTROSTATIC TERMS and NUCLEAR-SOLVENT INTERACTION
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_NEPUN(IR,IW)
+      ELSE
+        CALL RSM_NEPLN(IR,IW)
+      ENDIF
+
+      CALL RSM_PREQP
+C
+C     FFT
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_SETFFT_UN
+      ELSE
+        CALL RSM_SETFFT_LN(0)
+      ENDIF
+C
+C     GET VPR (IEQ > 0)  ! 2022/3/25
+C
+      IF(IEQ /= 0) CALL RSM_RDVMAT
+C
+      CALL RSM_PUTENE ! 2022/3/25
+      CALL RSM_PUTPAR
+      CALL RSM_CLOSEABS
+
+      RETURN
+
+      END SUBROUTINE RSM_STRT
+C*MODULE RSM_MAIN  *DECK RSM_PRPMT
+C>
+C>    @brief   prepare the matrices for RISM & RISM-SCF calculations
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_PRPMT
+
+      IMPLICIT NONE
+C
+C     ----- PREPARE XMAT, ZMAT, and WU
+C
+C     PREPARE WU
+C
+      CALL RSM_PRWU
+C
+C     PREPARE XMAT, ZMAT, and SMT
+C
+      CALL RSM_ESP1
+      CALL RSM_PRPSMT
+
+      RETURN
+      END
+C*MODULE RSM_MAIN  *DECK RSM_INITIALIZE
+C>
+C>    @brief   get memory AND initialize
+C>
+C>    @author  Daisuke Yokogawa
+C> 
+      SUBROUTINE RSM_INITIALIZE
+
+      IMPLICIT NONE
+C
+C       INITIALIZE
+C
+      CALL RSM_1DINI
+C
+      RETURN
+      END 
+C*MODULE RSM_MAIN  *DECK RSM_FCK1
+C>
+C>    @brief   perform RISM calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITER: SCF iteration cycle
+C>             DIFF: largest absolute change in the density matrix
+C>             FA: solvated Fock matrix
+C>             DA: density matrix
+C>
+      SUBROUTINE RSM_FCK1(ITER,DIFF,FA,DA)
+
+      USE RISM_IO,  ONLY : IW
+      USE ABSMOD,   ONLY : NQMT0A, IFITU
+      USE RISM_MOD, ONLY : MASWRK, IGRD_TYP, NU, NV, NTAB, RTAB, RKTAB,
+     *                     ALPA, BETA, QV, QU, DENV, HWV, FNEP, FQLK, 
+     *                     FQS, WU, RTAB, RKTAB, BRG, HREF, JDIIS,
+     *                     MXDIIS, HKREF, IREST, RSM_ISTIEND, EUV_E8,
+     *                     FRISM, EUV_E2, IRSM_DAMP, CLTYP
+      USE RSMSED,   ONLY : IRISM, ITRRSM, IEXP, FEXP, NUM, NE, ICONCL,
+     *                     QMT, VPR, DMT, VCR, NSERCH, ITDDFT,
+     *                     ITER_RSMTD, IEQ, ISKIP_RSM, IRSM_COUNT
+      USE FFT_MOD,  ONLY : RSM_INITIAL_UN, RSM_INITIAL_LN,
+     *                     RSM_CLOSEFFT_UN, RSM_CLOSEFFT_LN
+      USE RISM_IO,  ONLY : IRSSQF
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: ITER
+      DOUBLE PRECISION, INTENT(IN   ) :: DIFF, DA(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: FA(*)
+C
+      LOGICAL             :: DORISM
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: ETS(:),W11(:),W12(:),W3A(:),
+     *                                   W3B(:),OPTM(:),XMT(:),YMT(:),
+     *                                   ZMT(:),W4A(:),H1(:),H2(:),
+     *                                   VDUM(:),W5(:),W6(:)
+      INTEGER,ALLOCATABLE             :: NIJ(:),INDXU(:),INDXV(:)
+C
+      DOUBLE PRECISION                :: CL_HNC, CL_KH, CL_PSE2, CL_PSE3
+      DATA CL_HNC,CL_KH   /8HHNC     ,8HKH      /
+      DATA CL_PSE2,CL_PSE3/8HPSE2    ,8HPSE3    /
+C
+      INTEGER             :: I, ISTRT, IEND, NTOT,
+     *                       L1, L2, L3, L01, L02, L03, L04, L05, L11, 
+     *                       L12, L13, L13D, L15, L16, L17, NREQ1
+
+      DOUBLE PRECISION    :: T1, FCH, ECRRSM
+C     FUNCTION IN GAMESS
+      DOUBLE PRECISION    :: DDOT
+C
+      IF((ITER == 1 .or. DIFF > 2.0D-04) .and. ITRRSM < 0 .and. 
+     *    IREST == 0 .and. NSERCH == 1) RETURN
+C
+      ITRRSM = ITRRSM + 1
+C
+      IF(ITRRSM <= 4 .or. DIFF > 1.0D-01) THEN
+        IEXP = 1
+        FEXP = 0.0D+00
+      ENDIF
+
+      IF(ITDDFT >= 1 .and. ITER_RSMTD < 3) THEN
+        IEXP = 1
+        FEXP = 0.0D+00
+      ENDIF
+
+      IF(CLTYP == CL_PSE2 .or. CLTYP == CL_PSE3) IEXP = 1
+C
+C     SKIP TDDFT FIRST STEP
+C
+      IF(NSERCH == 1 .and. ITER_RSMTD == 0 .and. ITDDFT >= 1) RETURN
+C
+C     CONICAL INTERSECTION SERCH
+C
+      IF(ICONCL == 1 .and. ITER_RSMTD == 0 .and. IEQ == 0 .and.
+     *   ITDDFT >= 1 ) RETURN
+C
+C     RISM CALCULATION
+C
+      DORISM = IEQ .EQ. 0 .and. 
+     *        (ISKIP_RSM==0 .or. (ISKIP_RSM==1 .and. IRSM_COUNT == 0))
+C 
+C     MEMORY ALLOCATION
+C
+      CALL RSM_ISTIEND(NU*NV,ISTRT,IEND,NTOT)
+
+      L1  = NUM
+      L2  = NUM*(NUM+1)/2
+      L3  = NUM*NUM   
+
+      L01 = NU
+      L02 = NV
+      L03 = NQMT0A+1
+      L04 = NQMT0A
+      L05 = NTAB
+      L11 = NTAB*NU*NU
+      L12 = NTAB*NV*NV
+      L13 = NTAB*NU*NV
+      L13D= NTAB*NTOT
+      L15 = NQMT0A   * NQMT0A
+      L16 = NTAB*NV*NQMT0A
+      L17 = (NQMT0A+1)*(NQMT0A+1)
+
+      IF(JDIIS == 3) THEN
+        NREQ1 = L13D + L13D + L13D*MXDIIS + L13D*MXDIIS + MXDIIS
+     *        + MXDIIS*MXDIIS
+      ELSEIF(JDIIS == 0) THEN
+        NREQ1 = 1
+      ENDIF
+
+      ALLOCATE(ETS(L13D),W11(L11),W12(L13),W3A(L05),W3B(L05),
+     *         OPTM(NREQ1),XMT(L15),YMT(L04),ZMT(L04),
+     *         W4A(L03),H1(L2),H2(L2),VDUM(L16),W5(L3),W6(L17))
+      ALLOCATE(NIJ(L3),INDXU(NTOT),INDXV(NTOT))
+C
+C     READ IMPORTANT DATA
+C
+      CALL RSM_DARE(XMT  ,L15, 39,0)
+      CALL RSM_DARE(ZMT  ,L04, 45,0)
+      CALL RSM_DARE(VDUM ,L16, 96,0)
+      CALL RSM_DARE(FQS  ,L13, 97,0)
+C
+C     GET DENSITY MATRIX
+C       (H1 IS USED AS WORKING ARRAY)
+C
+      DO I=1,L2
+        H1(I) = DA(I)
+      ENDDO
+
+      IF(ITDDFT >= 1) THEN
+        IF(ITER_RSMTD >= 1 .or. NSERCH /= 1) CALL RSM_GETDEN(1,L1,H1,W5)
+      ENDIF
+C
+C       DETERMINE DMAT
+C
+      CALL RSM_ESP2(IRSSQF,L1,NQMT0A,NIJ,H1,YMT)
+
+      IF(ITRRSM <= 0) THEN
+        CALL VCLR(DMT,1,L03)
+      ELSE
+        CALL RSM_DARE(DMT,L03,24,0)
+        IF(IRSM_DAMP /= 0) W6 = QMT
+      ENDIF
+C
+C     COMPUTE cSED CHARGES
+C
+      IF(MASWRK) THEN
+        WRITE(IW,*) ''
+        WRITE(IW,'(10X,A14)') '--------------'
+        WRITE(IW,'(10X,A14)') ' cSED CHARGES '
+        WRITE(IW,'(10X,A14)') '--------------'
+      ENDIF
+
+      IF(IFITU == 1) THEN
+        T1 = REAL(NE,8)
+        CALL RSM_CONFIT1(XMT,YMT,ZMT,QMT,DMT,QU,T1)
+      ELSEIF(IFITU == 3) THEN
+        T1 = REAL(NE,8)
+        CALL RSM_CONFIT2(XMT,YMT,ZMT,QMT,DMT,QU,T1)
+      ELSE
+        CALL ABRT
+      ENDIF
+      CALL RSM_DAWR(DMT,L03,24,0)
+C
+C     DAMPING
+C
+      IF(IRSM_DAMP /= 0 .and. ITRRSM >= 1) QMT = 0.8D+00*W6+0.2D+00*QMT
+C
+C     PREPARE ELECTROSTATIC POTENTIAL
+C
+      CALL RSM_MKFQ1D(NTAB,NU,NV,ALPA,BETA,RTAB,RKTAB,QU,QV,DMT,VDUM,
+     *                FQS,FQLK)
+C
+C     RESTART IF IREST == 3
+C
+      IF(IREST == 3 .and. ( ITER == 2 .or. ITER_RSMTD == 0) .and. 
+     *   NSERCH == 1) THEN
+        CALL RSM_MKFQ1DRST(NTAB,NU,NV,ALPA,BETA,RTAB,RKTAB,QU,QV,FQS,
+     *                     FQLK)
+      ENDIF
+C
+C     RISM CALCULATION
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_INITIAL_UN
+      ELSE
+        CALL RSM_INITIAL_LN(0)
+      ENDIF
+C
+      IF(DORISM) THEN
+        IRSM_COUNT = IRSM_COUNT + 1
+
+        CALL RSM_PRHKREF
+        CALL RSM_MAIN1D(IW,IEXP,FEXP,ISTRT,IEND,NTOT,
+     *              ETS,W3B,OPTM,W12,W3A,INDXU,INDXV)
+C
+C       UPDATE VPRE (H-bond from SSSV IS STORED INTO W12)
+C
+        CALL RSM_MKVMT(VDUM,VPR,W3A,QV,W12)
+C
+C       CALCULATE CORRECTION TERM (W12: WORKING ARRAY)
+C
+        CALL RSM_CALCHINT(W11,W12,W3A,FCH)
+        CALL RSM_MKFRE0(W3A,W12,FCH,FRISM)
+      ENDIF
+C
+C     PREPARE SOLVATED FOCK (FA)
+C
+      CALL RSM_CLSLVFCK(L1,NQMT0A,NIJ,W4A,H2,VPR,FA,H1,QMT,EUV_E8)
+      EUV_E2 = DDOT(L03,DMT,1,VPR,1)
+
+      ECRRSM = -EUV_E8 + FRISM
+C
+C     DEALLOCATE MEMORY
+C
+      IF(IGRD_TYP == 0) THEN
+        CALL RSM_CLOSEFFT_UN
+      ELSE
+        CALL RSM_CLOSEFFT_LN
+      ENDIF
+
+      CALL RSM_DAWR(FQS  ,L13, 19,0)
+
+      DEALLOCATE(ETS,W11,W12,W3A,W3B,OPTM,XMT,YMT,ZMT,W4A,H1,H2,
+     *           VDUM,W5,W6)
+      DEALLOCATE(NIJ,INDXU,INDXV)
+
+      RETURN
+      END 
+C*MODULE RSM_MAIN  *DECK RSM_FINILIZE
+C>
+C>    @brief   finalize the RISM calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+
+      SUBROUTINE RSM_FINILIZE
+
+      USE RISM_MOD, ONLY : MASWRK
+      USE RISM_IO,  ONLY : IW
+
+      IMPLICIT NONE
+C
+C     PRINT OUT ENERGIES
+C
+      CALL RSM_ENE1D(IW,MASWRK)       
+C
+C     Punch important values  
+C
+      CALL RSM_PUN
+      CALL RSM_PUNABSDMT
+
+      RETURN
+      END 
+C*MODULE RSM_MAIN  *DECK RSM_GRD
+C>
+C>    @brief   computed the gradients that depend on RISM-SCF calculations
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITYP: compute the derivative of omega? (0: yes, 1: no)
+C>             VPR: potential induced by solvent molecules
+C>             DA: density matrix
+C>             DE: gradients
+C>
+      
+      SUBROUTINE RSM_GRD(ITYP,VPR,DA,DE)
+
+      USE RISM_IO,  ONLY : IW
+      USE RSMSED,   ONLY : NAT, QMT
+      USE ABSMOD,   ONLY : NQMT0A
+      USE RISM_MOD, ONLY : MASWRK, CSB, FQLK
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: ITYP
+      DOUBLE PRECISION, INTENT(IN   ) :: DA(*), VPR(*) 
+      DOUBLE PRECISION, INTENT(INOUT) :: DE(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: DER1(:,:), DER2(:,:), FCT1(:), 
+     *                                   DMT(:)
+C 
+      INTEGER               :: I, J, L1, NN
+      DOUBLE PRECISION      :: VAL
+C
+C     ITYP == 0 : CALCULATE RSM_OMGINV TERM
+C          /= 0 : DO NOT CALCULATE RSM_OMGINV TERM
+C
+      L1 = NQMT0A+1
+      ALLOCATE(DER1(L1,3*NAT),DER2(L1,3*NAT),FCT1(L1),DMT(L1))
+C
+      CALL VCLR(DER1,1,L1*3*NAT)
+      CALL VCLR(DER2,1,L1*3*NAT)
+      CALL VCLR(DE  ,1,3*NAT)
+C
+      CALL RSM_CLDMT2(DA,DMT)
+      CALL RSM_MKDXMT (DMT,DER1)
+      CALL RSM_MKDYMT1(DA,DER2)
+      CALL RSM_MKDYMT2(DA,DER2)
+      CALL RSM_MKDSMT (DA,DER2)
+C
+      NN = 0
+      DO I=1,NQMT0A+1
+        VAL = 0.0D+00
+        DO J=1,NQMT0A
+          NN = NN + 1
+          VAL = VAL + VPR(J)*QMT(NN)
+        ENDDO
+        NN = NN + 1
+        FCT1(I) = -VAL
+      ENDDO
+C
+C     Calculate DE(electrostatic part)
+C
+      DO J=1,3*NAT
+        VAL=0.0D+00
+        DO I=1,NQMT0A+1
+          VAL=VAL+FCT1(I)*(DER1(I,J)-DER2(I,J))
+        ENDDO
+
+        DE(J)=VAL
+      ENDDO
+C
+C
+C
+      IF(MASWRK) THEN
+C
+C        Solvent part (charge)
+C
+         WRITE(IW,9072)
+         CALL RSM_EGOUT(DE,NAT)
+      ENDIF
+C
+C     Calculate DE(correlation function part)
+C
+      IF(ITYP == 0) CALL RSM_OMGINV(DE,CSB,FQLK)
+C
+      IF(MASWRK) THEN
+C
+C        Solvent part (total)
+C
+         WRITE(IW,9073)
+         CALL RSM_EGOUT(DE,NAT)
+      ENDIF
+C
+      DEALLOCATE(DER1,DER2,FCT1)
+C
+ 9072 FORMAT(/25X,22(1H-)/25X,22H SOLVENT PART(CHARGE) /25X,22(1H-))
+ 9073 FORMAT(/25X,22(1H-)/25X,22H SOLVENT PART(TOTAL)  /25X,22(1H-))
+
+      RETURN
+      END

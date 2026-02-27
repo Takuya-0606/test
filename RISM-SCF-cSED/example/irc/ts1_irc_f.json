@@ -1,0 +1,132 @@
+{
+  "name": "ts1_irc_f.log",
+  "validation": [
+    {
+      "header": "IRC",
+      "name": "TOTAL ENERGY : IRC POINT -5",
+      "value": "-248.3684626",
+      "type": "float",
+      "precision": 7,
+      "tolerance": 5e-05
+    },
+    {
+      "header": "IRC",
+      "name": "TOTAL ENERGY : IRC POINT -4",
+      "value": "-248.3685676",
+      "type": "float",
+      "precision": 7,
+      "tolerance": 5e-05
+    },
+    {
+      "header": "IRC",
+      "name": "TOTAL ENERGY : IRC POINT -3",
+      "value": "-248.3686369",
+      "type": "float",
+      "precision": 7,
+      "tolerance": 5e-05
+    },
+    {
+      "header": "IRC",
+      "name": "TOTAL ENERGY : IRC POINT -2",
+      "value": "-248.3686951",
+      "type": "float",
+      "precision": 7,
+      "tolerance": 5e-05
+    },
+    {
+      "header": "IRC",
+      "name": "TOTAL ENERGY : IRC POINT -1",
+      "value": "-248.3687348",
+      "type": "float",
+      "precision": 7,
+      "tolerance": 5e-05
+    },
+    {
+      "header": "IRC",
+      "name": "PATH DISTANCE STOTAL : IRC",
+      "value": "15.38621",
+      "type": "float",
+      "precision": 5,
+      "tolerance": 0.005
+    },
+    {
+      "header": "IRC",
+      "name": "NUCLEAR REPULSION : IRC",
+      "value": "179.8496741715",
+      "type": "float",
+      "precision": 10,
+      "tolerance": 5e-08
+    },
+    {
+      "header": "IRC",
+      "name": "ENERGY : IRC",
+      "value": "-248.3687343",
+      "type": "float",
+      "precision": 7,
+      "tolerance": 5e-05
+    },
+    {
+      "header": "IRC",
+      "name": "MASS WEIGHTED TANGENT GRAD. NORM : IRC",
+      "value": "0.0002660",
+      "type": "float",
+      "precision": 7,
+      "tolerance": 5e-05
+    },
+    {
+      "header": "IRC",
+      "name": "NEXT GEOMETRY STEP PREDICTED ANGLE : IRC",
+      "value": "11.852",
+      "type": "float",
+      "precision": 3,
+      "tolerance": 0.5
+    },
+    {
+      "header": "IRC",
+      "name": "NEXT CARTESIAN RMS DISPLACEMENT : IRC",
+      "value": "0.0291484",
+      "type": "float",
+      "precision": 7,
+      "tolerance": 5e-05
+    },
+    {
+      "header": "RISM AND RISM-SCF-cSED RESULTS",
+      "name": "Delta mu (HCN) (kcal/mol)",
+      "value": "7.845",
+      "type": "float",
+      "precision": 3,
+      "tolerance": 0.5
+    },
+    {
+      "header": "RISM AND RISM-SCF-cSED RESULTS",
+      "name": "Delta mu (GF)  (kcal/mol)",
+      "value": "-20.417",
+      "type": "float",
+      "precision": 3,
+      "tolerance": 0.5
+    },
+    {
+      "header": "RISM AND RISM-SCF-cSED RESULTS",
+      "name": "E(UU)+Delta mu (HNC)",
+      "value": "-248.36873484",
+      "type": "float",
+      "precision": 8,
+      "tolerance": 4.9999999999999996e-06
+    },
+    {
+      "header": "RISM AND RISM-SCF-cSED RESULTS",
+      "name": "E(UU)+Delta mu (GF) ",
+      "value": "-248.41377230",
+      "type": "float",
+      "precision": 8,
+      "tolerance": 4.9999999999999996e-06
+    },
+    {
+      "header": "TOTAL WALLTIME",
+      "name": "TOTAL WALLTIME (S)",
+      "value": "36581.1",
+      "type": "skip_float",
+      "precision": 1
+    }
+  ]
+}

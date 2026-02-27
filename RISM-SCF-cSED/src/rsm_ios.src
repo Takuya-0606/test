@@ -1,0 +1,320 @@
+C*MODULE RSM_IOS  *DECK RSM_OPDA
+C>
+C>    @brief   open dictionary file for RISM-SCF calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IFIRST: is it required for initialization? (0: no, 1: yes)
+C>
+
+      SUBROUTINE RSM_OPDA(IFIRST)
+C
+      USE RISM_MOD, ONLY : MASWRK
+      USE RISM_IO,  ONLY : IRSDAF, IODARS, MAXIO, IRECLN, IRECST, IFILEN
+C
+C     ---- OPEN RANDOM ACCESS FILE ----
+C
+      IMPLICIT NONE
+C
+      INTEGER, INTENT(IN   ) :: IFIRST
+C
+      INTEGER :: I
+C
+      CHARACTER*256 FILENM
+C
+      IF (MASWRK) THEN
+C
+        CALL GMS_GETENV('RISM01',FILENM)
+        OPEN (UNIT=IRSDAF, FILE=FILENM, STATUS='UNKNOWN',
+     *        ACCESS='DIRECT', FORM='UNFORMATTED',
+     *        RECL=8*IRECLN)
+C
+      END IF
+C
+      IF(IFIRST == 1) THEN
+        IRECST = 1
+        DO I = 1,MAXIO
+          IODARS(I) = -1
+        ENDDO
+        IRECST = IRECST + 1
+        IF(MASWRK) WRITE(UNIT=IRSDAF, REC=1) IRECST,IODARS,IFILEN
+      ELSE
+        IF(MASWRK) READ(UNIT=IRSDAF, REC=1) IRECST,IODARS,IFILEN
+      ENDIF
+
+      RETURN
+      END
+C*MODULE RSM_IOS  *DECK RSM_CLDA
+C>
+C>    @brief   close dictionary file 
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>
+      SUBROUTINE RSM_CLDA
+
+      USE RISM_IO,  ONLY : IRSDAF
+
+      IMPLICIT NONE
+
+      CLOSE(IRSDAF)
+
+      RETURN
+      END
+     
+C*MODULE RSM_IOS  *DECK RSM_DAWR
+C>
+C>    @brief   save data in dictionary file 
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   V: data array
+C>             LEN: the length of the data
+C>             NREC: the recording position
+C>             IDTYP: not used
+C>
+      SUBROUTINE RSM_DAWR(V,LEN,NREC,IDTYP)
+C
+      USE RISM_MOD, ONLY : MASWRK
+      USE RISM_IO,  ONLY : IRSDAF, IODARS, IFILEN, IRECST, IRECLN
+C
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: LEN, NREC, IDTYP
+      DOUBLE PRECISION, INTENT(IN   ) :: V(LEN)
+
+      LOGICAL                :: NEWREC
+      INTEGER                :: N, IST, NS, NSP, LENT, LENW, IF
+C
+C         WRITE A LOGICAL RECORD ON THE DAF DICTIONARY FILE
+C         A LOGICAL RECORD MAY SPAN SEVERAL PHYSICAL RECORDS
+C
+      N = IODARS(NREC)
+      IF (N .GT. 0 .AND. LEN .NE. IFILEN(NREC)) GO TO 800
+      NEWREC = .FALSE.
+C
+C     NEW DATA
+C
+      IF (N <= 0) THEN
+        IODARS(NREC) = IRECST
+        IFILEN(NREC) = LEN
+        NEWREC       = .TRUE.
+        IRECST       = IRECST + (LEN-1)/IRECLN + 1
+        N            = IODARS(NREC)
+      ENDIF
+      IST = -IRECLN + 1
+      NS = N
+      LENT = LEN
+  120 CONTINUE
+         IST = IST + IRECLN
+         IF = IST + LENT - 1
+         IF ((IF-IST+1) .GT. IRECLN) IF = IST+IRECLN-1
+         NSP = NS
+         LENW = IF - IST + 1
+         CALL RSM_DAWRT(V(IST),LENW,IRSDAF,NSP)
+         LENT = LENT - IRECLN
+         NS = NS + 1
+         N = NS
+      IF (LENT .GE. 1) GO TO 120
+
+      IF (NEWREC .AND. MASWRK)
+     *      WRITE(UNIT=IRSDAF,REC=1) IRECST,IODARS,IFILEN
+      RETURN
+C
+  800 CONTINUE
+      IF (MASWRK) WRITE (6,9008) NREC,LEN,IFILEN(NREC)
+      CALL ABRT
+      RETURN
+C
+ 9008 FORMAT(1X,'RSM_DAWR HAS REQUESTED A RECORD WITH LENGTH',
+     *       1X,'DIFFERENT THAN BEFORE - ABORT FORCED.'/
+     *       1X,'RISM01 RECORD ',I5,' NEW LENGTH =',I5,
+     *          ' OLD LENGTH =',I5)
+      END
+C*MODULE RSM_IOS  *DECK RSM_DARE
+C>
+C>    @brief   read data in dictionary file
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   V: data array
+C>             LEN: the length of the data
+C>             NREC: the recording position
+C>             IDTYP: not used
+C>
+      SUBROUTINE RSM_DARE(V,LEN,NREC,IDTYP)
+C
+      USE RISM_MOD, ONLY : MASWRK
+      USE RISM_IO,  ONLY : IRSDAF, IODARS, IFILEN, IRECST, IRECLN
+C
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: LEN, NREC, IDTYP
+      DOUBLE PRECISION, INTENT(  OUT) :: V(LEN)
+C
+      INTEGER                :: N, IS, NS, NSP, LENT, LENW, IF
+C
+      N = IODARS(NREC)
+      IF(N.EQ.-1) GO TO 800
+      IS = -IRECLN + 1
+      NS = N
+      LENT = LEN
+
+  100 CONTINUE
+         IS = IS + IRECLN
+         IF = IS + LENT - 1
+         IF ((IF-IS+1) .GT. IRECLN) IF = IS + IRECLN - 1
+         NSP = NS
+         LENW = IF - IS + 1
+         CALL RSM_DARD(V(IS),LENW,IRSDAF,NSP)
+         LENT = LENT - IRECLN
+         NS = NS + 1
+         N = NS
+      IF (LENT .GE. 1) GO TO 100
+      RETURN
+C
+  800 CONTINUE
+      IF (MASWRK) WRITE(6,9000) NREC,LEN
+      CALL ABRT
+      RETURN
+C
+ 9000 FORMAT(1X,'*** ERROR ***, ATTEMPT TO READ A -RISM01- RECORD',
+     *         ' THAT WAS NEVER WRITTEN.'/1X,'NREC,LEN=',I5,I10)
+      END
+
+C*MODULE RSM_IOS  *DECK RSM_DAWRT
+C>
+C>    @brief   save data in dictionary file (called by RSM_DAWR)
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   V: data array
+C>             LEN: the length of the data
+C>             IDAF: the file number of the dictionary file 
+C>             NS: record number
+C>
+      SUBROUTINE RSM_DAWRT(V,LEN,IDAF,NS)
+
+      USE RISM_MOD, ONLY : MASWRK
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: LEN, IDAF, NS
+      DOUBLE PRECISION, INTENT(IN   ) :: V(LEN)
+C
+C     ----- WRITE A PHYSICAL RECORD ON THE DAF -----
+C
+      IF (MASWRK) WRITE (UNIT=IDAF, REC=NS) V
+      RETURN
+      END
+
+C*MODULE RSM_IOS  *DECK RSM_DARD
+C>
+C>    @brief   read data in dictionary file (called by RSM_DARE)
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   V: data array
+C>             LEN: the length of the data
+C>             IDAF: the file number of the dictionary file
+C>             NS: record number
+C>
+      SUBROUTINE RSM_DARD(V,LEN,IDAF,NS)
+
+      USE RISM_MOD, ONLY : MASWRK, GOPARR, MASTER
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: LEN, IDAF, NS
+      DOUBLE PRECISION, INTENT(  OUT) :: V(LEN)
+
+      INTEGER                :: ITYP
+C
+C       READ A PHYSICAL RECORD FROM THE DAF
+C
+      IF (MASWRK) READ (UNIT=IDAF, REC=NS) V
+      ITYP = 100 + IDAF
+      IF (GOPARR) CALL RSM_BCAST(ITYP,'F',V,LEN,MASTER)
+      RETURN
+      END
+C*MODULE RSM_IOS  *DECK RSM_SQOPN
+C>
+C>    @brief   open a sequential file for RISM-SCF calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IUNIT: file number
+C>             FNAME: file name
+C>             FSTAT: file status
+C>             FMT: file format
+C>
+      SUBROUTINE RSM_SQOPN(IUNIT,FNAME,FSTAT,FMT)
+C
+      USE RISM_MOD, ONLY : MASWRK
+C
+      IMPLICIT NONE
+C
+      INTEGER,       INTENT(IN   ) :: IUNIT
+      CHARACTER*(*), INTENT(IN   ) :: FNAME, FSTAT, FMT
+C     PARAMETER (MXUNIT=299)
+C
+      CHARACTER*256 :: FILENM
+      CHARACTER*1   :: NULL
+C
+      INTEGER       :: KOL
+C
+      FILENM=' '
+      IF (MASWRK) CALL GMS_GETENV(FNAME,FILENM)
+      IF (.NOT.MASWRK) RETURN
+
+      NULL = CHAR(0)
+      DO KOL=1,256
+        IF(FILENM(KOL:KOL).EQ.' '  .OR.
+     *     FILENM(KOL:KOL).EQ.NULL) GO TO 2
+      ENDDO
+      KOL=257
+    2 CONTINUE
+      IF(KOL.EQ.1) THEN
+        WRITE(6,3) FNAME
+        CALL ABRT
+      END IF
+      KOL=KOL-1
+      OPEN(UNIT=IUNIT, FILE=FILENM(1:KOL), STATUS=FSTAT,
+     *        ACCESS='SEQUENTIAL', FORM=FMT, ERR=4)
+      RETURN
+C
+C         ERROR HANDLING (E.G. FOR ERICFMT, ...)
+C
+    3 FORMAT(1X,'YOU MUST ASSIGN GENERIC NAME ',A,' WITH A SETENV.')
+C
+    4 CONTINUE
+      IF(FSTAT.EQ.'OLD') THEN
+         IF(MASWRK) WRITE(6,5) 'PRE-EXISTING',FNAME,FILENM(1:KOL)
+      ELSE
+         IF(MASWRK) WRITE(6,5) 'NEW',FNAME,FILENM(1:KOL)
+      ENDIF
+      CALL ABRT
+    5 FORMAT(//1X,'ERROR OPENING ',A,' FILE ',A,','/
+     *         1X,'ASSIGNED TO EXPLICIT FILE NAME ',A,','/
+     *         1X,'PLEASE CHECK THE -SETENV- FILE ASSIGNMENTS',
+     *            ' IN YOUR -RUNGMS- SCRIPT.')
+C
+      RETURN
+      END
+
+C*MODULE RSM_IOS  *DECK RSM_SQOPN
+C>
+C>    @brief   close the sequential file for RISM-SCF calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IUNIT: file number
+C>
+      SUBROUTINE RSM_SQCLS(IUNIT)
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN   ) :: IUNIT
+
+      CLOSE(IUNIT)
+
+      END

@@ -1,0 +1,137 @@
+==========================================================
+
+$RISMUN group                                 (optional)
+
+   This group controls solvent effect computations using 
+the Reference Interaction Site Model (RISM). If this group 
+is found in the input file, a RISM-SCF-cSED calculation 
+is performed. It requires solvent data, and the standard ones 
+are stored in the solv_data directory; test input files are 
+in the example directory. The data is contained in 
+the $HVDATA group, which needs to be added to the input file 
+for RISM-SCF-cSED calculations.   
+
+   The interaction between solute and solvent molecules 
+in a RISM-SCF-cSED calculation is computed with electrostatic 
+and non-electrostatic terms. The non-electrostatic term is 
+evaluated with Lennard-Jones potential. The parameters of 
+solvent molecules are included in the solvent data ($HVDATA).
+The parameters of the solute molecule are set in the $UDATA group. 
+The electrostatic potential is computed using constrained spatial 
+electron density distribution (cSED). The fitting option for 
+the cSED can be modified in $FITINP and $ABSINP. 
+
+   The free energy, nuclear gradients and hessian calculations 
+are programmed for RHF, UHF, and MCSCF wavefunctions and 
+DFT or MP2 level calculations using RHF. The analytic gradients 
+are available for closed-shell TD-DFT excited states, as well. 
+The single-point calculation also supports the coupled cluster method 
+in closed-shell systems. NMR chemical shifts can also be computed.
+
+   In order to improve the convergence of the RISM-SCF-cSED 
+calculations, it is recommended that FDIFF in the $SCF group 
+is set to FALSE. In many cases, it is useful to set DIIS 
+to TRUE as well, but if it does not work, try SOSCF=.T. instead.
+ 
+                         ---------
+
+CLTYP   Closure type in RISM calculation. 
+        = HNC Hyper-netted closure (default)
+        = KH  Kovalenko-Hirata closure
+        = PSE2
+        = PSE3
+ 
+XMN     Mixing ratio in RISM-SCF inner cycle
+        (Default: 0.4)
+
+THR     Threshold in RISM-SCF inner cycle
+        (Default: 1.0D-12)
+
+IEQ     Flag to control solvent relaxation
+        = 0  Solvent distribution is in equilibrium with QM state (default) 
+        = 1  Solvent distribution is fixed
+        = 2  Solvent distribution is fixed  (TDDFT & reference is ES state)
+
+        (If IEQ=1 or 2, additional inputs, $VMAT and $PCORR, are required.)
+
+NPRINT  Print flag in punch file
+        = XY (two-digit integer)
+           Y = 1 Radial distribution functions are printed out
+                 ($GOFR group).
+             = 0 No print
+           X = 1 $VMAT, $PCORR are printed out
+             = 0 No print
+
+        The first column of $GOFR is the distances between 
+        a solute site and a solvent site. If the solute atoms 
+        in the input are listed in the order U1, U2, ... , UM 
+        and the solvent atoms in the order V1, V2, ... , VN,
+        the RDFs of the following pairs are printed in the order
+        U1-V1, U2-V1, ... , UM-V1, U1-V2, ... , UM-V2, ... , UM-VN
+        after the second column.
+
+IROOT   State to which solvation structure is computed. 
+        In the excited state calculation, IROOT must be set.
+         (No default is provided.) 
+        = 0  Ground state
+        = n  n-th excited state
+
+==========================================================
+
+
+==========================================================
+
+$FITINP group                                   (optional)
+
+   This group controls the fitting of cSED. 
+
+IFITU   Constraint used in the fitting
+        = 0  No constraint
+        = 1  Constraint so that d coefficient is positive
+        = 3  Constraint so that the density on each atomic site
+             is positive (default)
+
+NMUESP  Exponent of the polynomial used in the constraint.   
+
+XMUMX   Factor MU of the constraint. 
+        See Bull. Chem. Soc. Jpn. 91, 1540 (2018)
+
+==========================================================
+
+
+==========================================================
+
+$ABSINP group                                   (optional)
+
+   This group specifies the weight in the constrained fitting 
+process of the density fitting (see J. Chem. Phys. 155, 204102 (2021)).  
+
+JABS    type of the weight, w(r) 
+        = 3  r**2 weight        (type II)
+        = 4  exp[-(a_I/r)**12]  (type III)
+
+   The difference between the fitting weight was discussed in 
+the paper, J. Chem. Phys. 155, 204102 (2021). 
+
+==========================================================
+
+
+==========================================================
+
+$UDATA group                                    (optional)
+
+   This group defines the Lennard-Jones (LJ) parameters 
+for the solute molecule. The epsilon and the sigma parameter 
+of each atom are specified in the same order as the coordinates. 
+The parameters between two dissimilar non-bonded atoms 
+are computed based on Lorentz-Berthelot rules. 
+It is usually taken from force fields like OPLS and GAFF. 
+Note that hydrogen atoms bonded to oxygen or nitrogen atoms 
+may not be assigned LJ parameters, but the values must still 
+be set. The epsilon 0.056 kcal/mol, and the sigma 1.0 angstrom 
+is routinely used.
+
+SGU     = An array giving the sigma parameters (angstrom).
+EPU     = An array giving the epsilon parameters (kcal/mol).
+
+==========================================================

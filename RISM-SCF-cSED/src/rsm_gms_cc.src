@@ -1,0 +1,336 @@
+C*MODULE RSM_GMS_CC  *DECK RSMCC_MOD
+C>
+C>    @brief   module to store the hole and particle orbital energy array 
+C>             detemined in gas phase
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      MODULE RSMCC_MOD
+      IMPLICIT NONE
+
+      DOUBLE PRECISION, ALLOCATABLE :: OEH_ORG(:), OEP_ORG(:)
+
+      END MODULE
+C*MODULE RSM_GMS_CC  *DECK RSM_CCINI
+C>
+C>    @brief   store the hole and particle orbital energies determied in gas
+C>             phase in OEH_ORG and OEP_ORG, respectively
+C>
+C>    @author  Daisuke Yokogawa
+C>    
+C>    @param   NO: the number of occuippied orbitals
+C>             NU: the number of unoccupied orbitals
+C>             OEH : the hole orbital energies determied in gas phase
+C>             OEP : the particle orbital energies determied in gas
+C>                   phase
+C>
+      SUBROUTINE RSM_CCINI(NO,NU,OEH,OEP)
+
+      USE RSMSED,    ONLY : IRISM
+      USE RSMCC_MOD, ONLY : OEH_ORG, OEP_ORG
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: NO, NU
+      DOUBLE PRECISION, INTENT(IN   ) :: OEH(*), OEP(*)
+C
+      INTEGER                :: I
+C
+
+      IF(IRISM /= 0) RETURN
+
+      ALLOCATE(OEH_ORG(NO),OEP_ORG(NU))
+C
+      DO I=1,NO
+        OEH_ORG(I) = OEH(I)
+      ENDDO
+
+      DO I=1,NU
+        OEP_ORG(I) = OEP(I)
+      ENDDO
+
+      RETURN
+      END SUBROUTINE
+C*MODULE RSM_GMS_CC  *DECK RSM_CCFIN
+C>
+C>    @brief   return the hole and particle orbital energies stored in
+C>             OEH_ORG and OEP_ORG
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NO: the number of occuippied orbitals
+C>             NU: the number of unoccupied orbitals
+C>             OEH : the hole orbital energies stored in OEH_ORG
+C>             OEP : the particle orbital energies stored in OEP_ORG
+C>
+      SUBROUTINE RSM_CCFIN(NO,NU,OEH,OEP)
+
+      USE RSMSED,    ONLY : IRISM
+      USE RSMCC_MOD, ONLY : OEH_ORG, OEP_ORG
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: NO, NU
+      DOUBLE PRECISION, INTENT(  OUT) :: OEH(*), OEP(*)
+C
+      INTEGER                :: I
+
+      IF(IRISM /= 0) RETURN
+
+      DO I=1,NO
+        OEH(I) = OEH_ORG(I)
+      ENDDO
+
+      DO I=1,NU
+        OEP(I) = OEP_ORG(I)
+      ENDDO
+
+      DEALLOCATE(OEH_ORG,OEP_ORG)
+C
+      RETURN
+      END SUBROUTINE
+C*MODULE RSM_GMS_CC  *DECK RSM_DENCC
+C>
+C>    @brief   computed CC density
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITYP: ITYP=1 HF density is included
+C>             L1: the number of atomic orbitals
+C>             NO: the number of occuippied orbitals
+C>             NU: the number of unoccupied orbitals
+C>             NC: the number of frozen cores
+C>             VEC: LCAO coefficients
+C>             PA: the denisty matrix in ao basis
+C>  
+      SUBROUTINE RSM_DENCC(ITYP,L1,NO,NU,NC,VEC,PA)
+C
+      USE MX_LIMITS, ONLY : MXAO
+C
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: ITYP, L1, NO, NU, NC
+      DOUBLE PRECISION, INTENT(IN   ) :: VEC(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: PA(*)
+C
+      INTEGER                :: IA
+      COMMON /IJPAIR/ IA(MXAO)
+
+      INTEGER                :: IR,IW,IP,IS,IPK,IDAF,NAV,IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      LOGICAL                :: GOPARR,DSKWRK,MASWRK
+      INTEGER                :: ME,MASTER,NPROC,IBTYP,IPTIM
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+C
+      DOUBLE PRECISION, PARAMETER     :: ZERO=0.0D+00, ONE=1.0D+00
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: WRK1(:), T1(:,:), WRK2(:)
+C
+      LOGICAL                :: SCORR
+      INTEGER                :: NMO, I, J, M, N, IJ1, MN1, MN2, II
+C
+C     MEMORY ALLOCATION
+C
+      ALLOCATE(WRK1(L1*L1),T1(NO,NU),WRK2(L1*L1))
+C
+      SCORR = .TRUE.   !  consider single CC amlitude (deafault)
+!     SCORR = .FALSE.  !  don't cosider single CC amplitude
+C
+      IF(.NOT.SCORR .and. MASWRK) THEN
+        WRITE(*,'(10X,A35)') '********* CAUTION !!!!! ***********'
+        WRITE(*,'(10X,A35)') '  THIS CC CALCULATION DOES NOT     '
+        WRITE(*,'(10X,A35)') '  INCLUDE SINGLE CC AMPLITUDE IN   '
+        WRITE(*,'(10X,A35)') '  Delta MU.                        '
+        WRITE(*,'(10X,A35)') '***********************************'
+      ENDIF
+C
+      NMO = NC+NO+NU
+      WRK1 = 0.0D+00
+C
+C     ADD D(HF)
+C
+      IF(ITYP == 0) THEN
+        DO I=1,NC+NO
+          II = NMO*(I-1)+I
+          WRK1(II)=2.0D+00
+        ENDDO
+      ENDIF
+C
+      IF(MASWRK) CALL RO1(1,NO,NU,T1)
+     
+      IF(GOPARR) THEN
+        CALL DDI_BCAST(101,'F',T1,NO*NU,0)
+        CALL DDI_SYNC(1234)
+      ENDIF
+
+      IF(SCORR) THEN
+        DO I=1,NU
+          DO J=1,NO
+            IJ1 = (J+NC-1)*NMO + I + NC + NO
+
+            WRK1(IJ1) = 0.5D+00*T1(J,I)
+          ENDDO
+        ENDDO
+
+        DO J=1,NU
+          DO I=1,NO
+            IJ1 = (J+NC+NO-1)*NMO + I + NC
+
+            WRK1(IJ1) = 0.5D+00*T1(I,J)
+          ENDDO
+        ENDDO
+      ENDIF
+C
+C     ----- MO -> AO
+C
+      CALL DGEMM('N','N',L1,NMO,NMO,ONE,VEC,L1,WRK1,NMO,ZERO,WRK2,L1)
+      CALL DGEMM('N','T',L1,L1,NMO,ONE,WRK2,L1,VEC,L1,ZERO,WRK1,L1)
+C
+C     -- FORM THE TOTAL DENSITY
+C
+      MN1 = 0
+      DO M=1,L1
+        DO N=1,M
+          MN1=MN1 + 1
+          MN2=L1*(N-1) + M
+          PA(MN1)=WRK1(MN2)
+        ENDDO
+      ENDDO
+C
+      DEALLOCATE(WRK1,T1,WRK2)
+
+      END
+C*MODULE RSM_GMS_CC  *DECK RSM_ADDFCKCC
+C>
+C>    @brief   add the solvated terms to FH, FP, FPH, OEH, and OEP
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MASWRK: Master or not
+C>             NO: the number of occuippied orbitals
+C>             NU: the number of unoccupied orbitals
+C>             FH: hole/hole block of the Fock matrix
+C>             FP: particle/particle block of the Fock matrix
+C>             FHP:hole/particle block of the Fock matrix 
+C>             EH: hole energy array
+C>             EP: particle energy array
+C>             FSLV: the solvated term to be added
+C>
+      SUBROUTINE RSM_ADDFCKCC(MASWRK,NO,NU,FH,FP,FHP,EH,EP,FSLV)
+      USE RSMCC_MOD, ONLY : OEH_ORG, OEP_ORG
+
+      IMPLICIT NONE
+C
+      LOGICAL,          INTENT(IN   ) :: MASWRK
+      INTEGER,          INTENT(IN   ) :: NO, NU
+      DOUBLE PRECISION, INTENT(IN   ) :: FSLV(*)
+      DOUBLE PRECISION, INTENT(INOUT) :: FH(NO,NO),FP(NU,NU),FHP(NO,NU)
+      DOUBLE PRECISION, INTENT(  OUT) :: EH(NO), EP(NU)
+C
+      INTEGER                :: I, II, J, IJ, IROW, JROW
+C
+      IF(MASWRK) THEN
+C
+C       FILL HOLE AND PARTICLE ORBITAL ENERGY ARRAY
+C
+        II = 0
+        DO I=1,NO+NU
+          II = II+I
+
+          IF(I.LE.NO) THEN
+            EH(I)    = OEH_ORG(I)    + FSLV(II)
+          ELSE
+            EP(I-NO) = OEP_ORG(I-NO) + FSLV(II)
+          END IF
+        ENDDO
+C
+C       FILL HOLE/HOLE, PARTICLE/PARTICLE, AND HOLE/PARTICLE
+C       BLOCKS OF THE fOCK MATRIX.  DIAGONALS ARE SET TO ZERO
+C
+        IJ = 0
+        DO I=1,NO
+          DO J=1,I
+            IJ = IJ+1
+            FH(I,J)=FH(I,J)+FSLV(IJ)
+            FH(J,I)=FH(J,I)+FSLV(IJ)
+           ENDDO
+           FH(I,I)=0.0D+00
+        ENDDO
+C
+        DO I=1,NU
+          IROW = I+NO
+          II = (IROW*IROW-IROW)/2
+          DO J=1,I
+            JROW = J+NO
+            IJ = II + JROW
+            FP(I,J)=FP(I,J)+FSLV(IJ)
+            FP(J,I)=FP(J,I)+FSLV(IJ)
+          ENDDO
+          FP(I,I)=0.0D+00
+        ENDDO
+C
+        DO I=1,NU
+          IROW = I+NO
+          II = (IROW*IROW-IROW)/2
+          DO J=1,NO
+            IJ = II + J
+            FHP(J,I)=FHP(J,I)+FSLV(IJ)
+          ENDDO
+        ENDDO
+      ENDIF
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_CC  *DECK RSM_PRPFCKGAS
+C>
+C>    @brief   compute the Fock matrix in gas phase
+C>
+C>    @author  Daisuke Yokogawa
+C>
+      SUBROUTINE RSM_PRPFCKGAS
+
+      USE mx_limits, ONLY: MXATM
+
+      IMPLICIT NONE
+C     GAMESS
+      INTEGER          :: NAT, ICH, MUL, NUM, NQMT, NE, NA, NB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      DOUBLE PRECISION :: X
+      COMMON /FMCOM / X(1)
+C
+      DOUBLE PRECISION, ALLOCATABLE :: FA(:), FV(:)
+
+      INTEGER             :: L2, I
+C
+      L2 = NUM*(NUM+1)/2
+C
+C     MEMORY ALLOCATION
+C
+      ALLOCATE(FA(L2),FV(L2))
+C
+C     READ SOLVATED FOCK
+C
+      CALL DAREAD(IDAF,IODA,FA,L2,14,0)
+C
+C     READ SOLVATED FOCK(V)
+C
+      CALL RSM_DARE(FV,L2,15,0)
+C
+C     SAVE FOCK(GAS)
+C
+      DO I=1,L2
+        FA(I) = FA(I) - FV(I)
+      ENDDO
+      CALL DAWRIT(IDAF,IODA,FA,L2,14,0)
+C
+      DEALLOCATE(FA,FV)
+
+      RETURN
+      END 

@@ -1,0 +1,317 @@
+C*MODULE RSM_GMS_MP2  *DECK RSM_CPHF8
+C>
+C>    @brief   modify the L.H.S. of Z-vector equation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   PMN: MP2 density in MOs
+C>             XLAI: L.H.S. of Z-vector equation
+C>             CMO: molecular orbital
+C>             NOCC: number of occupied orbitals
+C>             NVIR: number of viertual orbitals
+C>             NBF: number of AOs
+C>
+      SUBROUTINE RSM_CPHF8(PMN,XLAI,CMO,NOCC,NVIR,NBF)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, NUM, RSM_SCF_SETPAR, RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1, RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_SETINF2,
+     *                     RSM_SCF_CLOSEINF2
+      USE RISM_MOD, ONLY : RSM_SETPAR, RSM_SETVAR,RSM_PUTVAR
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: NOCC, NVIR, NBF
+      DOUBLE PRECISION, INTENT(IN   ) :: PMN(*), CMO(NBF,*)
+      DOUBLE PRECISION, INTENT(INOUT) :: XLAI(NOCC,NVIR)
+C
+      DOUBLE PRECISION,   ALLOCATABLE :: PAO(:), RSMAO(:), RSMAO2(:),
+     *                                   WRK(:), PMO(:)
+
+      INTEGER                :: L1, L2, L3, II, JJ
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF      
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SCF_SETINF2
+      CALL RSM_SETABS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+      L1 = NUM
+      L2 = L1*(L1+1)/2
+      L3 = L1*L1
+      IF(L1 /= NBF) CALL ABRT
+C
+C     ALLOCATE MEMORY
+C
+      ALLOCATE(PAO(L2),RSMAO(L2),RSMAO2(L3),WRK(NBF*NBF),PMO(NVIR*NOCC))
+C
+C     -- SYMMETRIZE PMN ---
+      CALL SQTR(PMN,PAO,NBF)
+
+      CALL RSM_CPHF_DRV1(0,PAO,RSMAO,1.0D+00)
+
+C     -- MAKE TRIANGLE INTO SQUARE MATRIX---
+      CALL CPYTSQ(RSMAO,RSMAO2,NBF,1)
+C
+C     -- TRANSFORM PAO TO MO BASIS --
+      CALL MRARBR(RSMAO2,NBF,NBF,NBF,CMO,NBF,NOCC,WRK,NBF)
+      CALL DGEMM('T','N',NVIR,NOCC,NBF,1.0D+00,CMO(1,NOCC+1),NBF,WRK,
+     *           NBF,0.0D+00,PMO,NVIR)
+
+      DO II = 1,NVIR
+        DO JJ = 1,NOCC
+          XLAI(JJ,II)=XLAI(JJ,II)+4.0D+00*PMO((JJ-1)*NVIR+II)
+        ENDDO
+      ENDDO 
+C
+C     CLOSE
+C
+      DEALLOCATE(PAO,RSMAO,RSMAO2,WRK,PMO)
+
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEINF2
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MP2  *DECK RSM_CPHF9
+C>
+C>    @brief   modify the A matrix in the R.H.S. of Z-vector equation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   GMVEC0: trial vector of the previous step
+C>             GMVEC1: trial vector of the current step
+C>             NOCC: number of occupied orbitals
+C>             NVIR: number of viertual orbitals
+C>             NBF: number of AOs
+C>             CMO: molecular orbital
+C>             ENG: orbital energy
+C>             FACTOR: -1.0 or 1.0
+C>
+      SUBROUTINE RSM_CPHF9(GMVEC0,GMVEC1,NOCC,NVIR,NBF,CMO,ENG,FACTOR)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, NUM, RSM_SCF_SETPAR, RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1, RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR
+      USE RISM_MOD, ONLY : RSM_SETPAR, RSM_SETVAR,RSM_PUTVAR
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: NOCC, NVIR, NBF
+      DOUBLE PRECISION, INTENT(IN   ) :: GMVEC0(NOCC,NVIR),CMO(NBF,NBF),
+     *                                   ENG(*),FACTOR
+      DOUBLE PRECISION, INTENT(INOUT) :: GMVEC1(NOCC,NVIR)
+C
+      DOUBLE PRECISION,   ALLOCATABLE :: PAO(:), RSMAO(:), RSMAO2(:),
+     *                                   WRK(:),PMO(:),PMN(:)
+      DOUBLE PRECISION                :: ENGA
+
+      INTEGER                :: L1, L2, L3, IA, II, JJ, IV2
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF      
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SETABS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+      L1 = NUM
+      L2 = L1*(L1+1)/2
+      L3 = L1*L1
+C
+C     ALLOCATE MEMORY
+C
+      ALLOCATE(PAO(L3),RSMAO(L2),WRK(NBF*NBF),PMO(NVIR*NOCC),PMN(L2))
+C
+C
+C
+      DO IA=1,NVIR
+         DO II=1,NOCC
+            PMO((II-1)*NVIR+IA)=GMVEC0(II,IA)
+         ENDDO
+      ENDDO
+
+      CALL MRARTR(PMO,NVIR,NVIR,NOCC,CMO,NBF,NBF,WRK,NBF)
+      CALL DGEMM('N','N',NBF,NBF,NVIR,1.0D+00,CMO(1,NOCC+1),NBF,WRK,
+     *           NBF,0.0D+00,PAO,NBF)
+C
+C     -- SYMMETRIZE PMN ---
+      CALL SQTR(PAO,PMN,NBF)
+
+      CALL RSM_CPHF_DRV1(1,PMN,RSMAO,1.0D+00)
+
+C     -- MAKE TRIANGLE INTO SQUARE MATRIX---
+      CALL CPYTSQ(RSMAO,PAO,NBF,1)
+C
+C     -- TRANSFORM PAO TO MO BASIS --
+      CALL MRARBR(PAO,NBF,NBF,NBF,CMO,NBF,NOCC,WRK,NBF)
+      CALL DGEMM('T','N',NVIR,NOCC,NBF,1.0D+00,CMO(1,NOCC+1),NBF,WRK,
+     *           NBF,0.0D+00,PMO,NVIR)
+
+      IV2 = 0
+      DO II = 1,NOCC
+        DO JJ = 1,NVIR
+          IV2 = IV2 + 1
+          ENGA= ENG(JJ+NOCC)
+
+          GMVEC1(II,JJ)=GMVEC1(II,JJ) 
+     *                 + 4.0D+00*FACTOR*PMO(IV2)/(ENGA-ENG(II))
+!         print *,FACTOR*PMO(IV2)/(ENGA-ENG(II))
+        ENDDO
+      ENDDO 
+!        call abrt_gms
+C
+C     CLOSE
+C
+      DEALLOCATE(PAO,RSMAO,WRK,PMO,PMN)
+
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MP2  *DECK RSM_CPHF10
+C>
+C>    @brief   modify W_{ij}[2] for gradient calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   PMN: MP2 density in MOs
+C>             WIJ: W_{ij}[2] in MP2 gradient calculation
+C>             NOCC: number of occupied orbitals
+C>             NVIR: number of viertual orbitals
+C>             NBF: number of AOs
+C>             CMO: molecular orbital
+C>
+      SUBROUTINE RSM_CPHF10(PMN,WIJ,NOCC,NBF,CMO)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, NUM, RSM_SCF_SETPAR, RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1, RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_SETINF2,
+     *                     RSM_SCF_CLOSEINF2
+      USE RISM_MOD, ONLY : RSM_SETPAR, RSM_SETVAR,RSM_PUTVAR
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RSM_BSMOD,ONLY : RSM_SCF_SETBS, RSM_SCF_CLOSEBS
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: NOCC, NBF
+      DOUBLE PRECISION, INTENT(IN   ) :: PMN(NBF,NBF), CMO(NBF*NBF)
+      DOUBLE PRECISION, INTENT(INOUT) :: WIJ(NOCC,*)
+C
+      INTEGER :: IR, IW, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+C
+      DOUBLE PRECISION, ALLOCATABLE :: PAO(:),RSMAO(:),RSMAO2(:),WRK(:),
+     *                                 PMO(:),PHF(:)
+
+      INTEGER             :: L1, L2, L3, I, J
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF      
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SCF_SETINF2
+      CALL RSM_SETABS
+      CALL RSM_SCF_SETBS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+      L1 = NUM
+      L2 = L1*(L1+1)/2
+      L3 = L1*L1
+      IF(L1 /= NBF) CALL ABRT
+C
+C     ALLOCATE MEMORY
+C
+      ALLOCATE(PAO(L2),RSMAO(L2),RSMAO2(L3),WRK(NBF*NBF),PMO(NOCC*NOCC),
+     *         PHF(L2))
+C
+C     -- SYMMETRIZE PMN ---
+      CALL SQTR(PMN,PAO,NBF)
+
+      CALL RSM_CPHF_DRV1(1,PAO,RSMAO,1.0D+00)
+
+C     -- MAKE TRIANGLE INTO SQUARE MATRIX---
+      CALL CPYTSQ(RSMAO,RSMAO2,NBF,1)
+C
+C     -- TRANSFORM PAO TO MO BASIS --
+      WRK = 0.0D+00
+      CALL MRARBR(RSMAO2,NBF,NBF,NBF,CMO,NBF,NOCC,WRK,NBF)
+      CALL DGEMM('T','N',NOCC,NOCC,NBF,1.0D+00,CMO,NBF,WRK,NBF,
+     *           0.0D+00,PMO,NOCC)
+
+      DO J = 1,NOCC
+        DO I = 1,NOCC
+          WIJ(I,J)=WIJ(I,J) - 2.0D+00*PMO((J-1)*NOCC+I)
+        ENDDO
+      ENDDO
+C
+C  
+C
+      CALL DAREAD(IDAF,IODA,PHF,L2,16,0)
+      CALL RSM_CPHF_DRV2(PHF,PAO)
+C
+C     CLOSE
+C
+      DEALLOCATE(PAO,RSMAO,RSMAO2,WRK,PMO,PHF)
+
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEINF2
+      CALL RSM_CLOSEABS
+      CALL RSM_SCF_CLOSEBS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END

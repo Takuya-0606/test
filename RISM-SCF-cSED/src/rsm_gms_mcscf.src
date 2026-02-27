@@ -1,0 +1,1080 @@
+C*MODULE RSM_GMS_MCSCF  *DECK RSM_DETDM2
+C>
+C>    @brief   computed density matrix
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IROOT: the root whose density is computed
+C>             DAO: density matrix
+C>
+      SUBROUTINE RSM_DETDM2(IROOT,DAO)
+C
+      use mx_limits, only: mxatm, mxrt
+C
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: IROOT
+      DOUBLE PRECISION, INTENT(  OUT) :: DAO(*)
+C
+      INTEGER :: NFT11, NFT12, NFT13, NFT14, NFT15, NFT16, IDAF20, 
+     *           NEMEMX
+      COMMON /CIFILS/ NFT11,NFT12,NFT13,NFT14,NFT15,NFT16,IDAF20,NEMEMX
+
+      INTEGER :: NFLGDM, IWTS_GMS, NCORSV, NCOR, NACT, NORB, NA, NB, K,
+     *           KST, IROOT_GMS, IPURES, MAXW1, NITER, MAXP, NCI,
+     *           IGPDET, KSTSYM, NFTGCI, IDWEIGH, IFTS
+      DOUBLE PRECISION :: W_GMS, SPINS, CRIT, PRTTOL, SDET, SZDET,
+     *                    GRPDET, STSYM, GLIST, DWPARM, FSTATE
+      COMMON /DETWFN/ W_GMS(MXRT),SPINS(MXRT),CRIT,PRTTOL,SDET,SZDET,
+     *                GRPDET,STSYM,GLIST,DWPARM,
+     *                NFLGDM(MXRT),IWTS_GMS(MXRT),NCORSV,NCOR,NACT,NORB,
+     *                NA,NB,K,KST,IROOT_GMS,IPURES,MAXW1,NITER,MAXP,NCI,
+     *                IGPDET,KSTSYM,NFTGCI,IDWEIGH,
+     *                fstate(mxrt),ifts(mxrt)
+
+      DOUBLE PRECISION :: X
+      COMMON /FMCOM / X(1)
+
+      INTEGER :: NAT, ICH, MUL, NUM, NQMT, NE, MA, MB, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,MA,MB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+      
+      LOGICAL :: PACK2E
+      INTEGER :: NINTMX, NHEX, NTUPL, INTTYP, IGRDTYP
+      COMMON /INTFIL/ NINTMX,NHEX,NTUPL,PACK2E,INTTYP,IGRDTYP
+
+      INTEGER :: IR, IW, IP, IS, IJKT, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IJKT,IDAF,NAV,IODA(950)
+
+      INTEGER :: NWDVAR, MAXFM, MAXSM, LIMFM, LIMSM
+      COMMON /MACHIN/ NWDVAR,MAXFM,MAXSM,LIMFM,LIMSM
+
+      INTEGER :: NPRINTX, ITOL, ICUT, NORMF, NORMP, NOPK
+      COMMON /OUTPUT/ NPRINTX,ITOL,ICUT,NORMF,NORMP,NOPK
+
+      LOGICAL :: GOPARR,DSKWRK,MASWRK
+      INTEGER :: ME, MASTER, NPROC, IBTYP, IPTIM
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+C
+      LOGICAL :: SVDSKW
+      DOUBLE PRECISION :: PTGRP, CUTOFF, WSTATE(MXRT)
+      INTEGER :: I, MXSTAT, M1, M2, M4, L1, NSYM, NTOT, IWTS(MXRT),
+     *           NOCC1, NOCC2, LIBO, LCI, LDM1, LXX, LIXX, LWRK, LIFA, 
+     *           LWST, LIWST, LLABMO, LLBABL, LLBIRP, LSYIRP, LV, LAST, 
+     *           NEED, NEED1, LOADFM, LIWRK1, MXNZW, IIS, NIRRP, LCIVEC,
+     *           NSTATS, NDETS, NXTW, NXTR, IST
+C
+C     RESET WSTATE and 
+C
+      CALL VCLR(WSTATE,1,MXRT)
+      WSTATE(IROOT)=1.0D+00
+
+      MXSTAT=0
+      DO I=1,MXRT
+        IF(WSTATE(I).GT.0.0D+00) THEN
+          IF(I.LE.K) THEN
+            MXSTAT = MXSTAT+1
+            IWTS(MXSTAT) = I
+          END IF
+        END IF
+      ENDDO
+C
+      M1 = NACT
+      M2 = (M1*M1+M1)/2
+      M4 = (M2*M2+M2)/2
+      L1 = NUM
+      NSYM = 2**IGPDET
+      NTOT = NORB + NCORSV
+C
+      MXSTAT=0
+      MXNZW=0
+      DO I=MXRT,1,-1
+         IF(WSTATE(I).GT.0.0D+00) THEN
+            IF(MXSTAT.EQ.0) MXSTAT=I
+            MXNZW=MXNZW+1
+         END IF
+      ENDDO
+C
+C        ----- allocate memory for two particle density matrix -----
+C        N.B. the +5 below is to pad storage a bit in the case of no
+C        beta electrons.  This is a work around, instead we should
+C        fix the -MATRSA- code for the case of no beta electrons,
+C        rather than letting the code address the IBCON1(0) element.
+C
+      NOCC1 = NCORSV + NACT
+      NOCC2 = (NOCC1*NOCC1+NOCC1)/2
+C
+      CALL VALFM(LOADFM)
+      LIBO = LOADFM + 1
+      LCI    = LIBO + NTOT
+      LDM1   = LCI    + MXNZW*NCI
+      LXX    = LDM1   + M2
+      LIXX   = LXX    + NINTMX
+      LWRK   = LIXX   + NINTMX
+      LIFA   = LWRK   + NOCC2
+      LWST   = LIFA   + ((M1+1)*(M1+1))/NWDVAR + 1
+      LIWST  = LWST   + MXNZW
+      LLABMO = LIWST  + MXNZW
+      LLBABL = LLABMO + L1
+      LLBIRP = LLBABL + M1
+      LSYIRP = LLBIRP + 12
+      LV     = LSYIRP + 12
+      LAST   = LV     + L1*L1
+      NEED = LAST - LOADFM - 1
+      CALL GETFM(NEED)
+C
+      CALL BINOM6(X(LIFA),NACT)
+      CALL MATME2(NORB,NCOR,NA,NB,X(LIFA),NSYM,IIS)
+      CALL DAREAD(IDAF,IODA,X(LIBO),NTOT,262,1)
+      CALL CORTRA(X(LIBO),NTOT,NCORSV)
+      CALL VALFM(LOADFM)
+      LIWRK1 = LOADFM + 1
+      LAST  = LIWRK1 + IIS
+      NEED1 = LAST - LOADFM - 1
+      CALL GETFM(NEED1)
+C
+      CALL DETGRP(GRPDET,X(LLABMO),X(LLBABL),PTGRP,X(LLBIRP),
+     *            X(LSYIRP),NSYM,NIRRP,L1,NACT,NCORSV)
+C
+C        obtain CI coeficients for all states with nonzero weights
+C
+      SVDSKW = DSKWRK
+      DSKWRK = .FALSE.
+      CALL SEQREW(NFT12)
+      IF(MASWRK) READ(NFT12) NSTATS,NDETS
+      IF (GOPARR) CALL DDI_BCAST(2505,'I',NSTATS,1,MASTER)
+      IF (GOPARR) CALL DDI_BCAST(2506,'I',NDETS ,1,MASTER)
+C
+      LCIVEC = LCI
+      NXTW=1
+      NXTR=0
+      DO 620 IST=1,K
+        IF(IPURES.EQ.1) THEN
+          IF(ABS(SPINS(IST)-SDET).GT.0.03D+00) THEN
+            CALL SEQADV(NFT12)
+            GO TO 620
+          END IF
+          NXTR=NXTR+1
+        ELSE
+          NXTR=IST
+        END IF
+C
+        IF(NXTR.NE.IWTS(NXTW)) THEN
+          CALL SEQADV(NFT12)
+        ELSE
+          CALL SQREAD(NFT12,X(LCIVEC),NCI)
+          LCIVEC = LCIVEC + NCI
+          NXTW=NXTW+1
+        END IF
+  620 CONTINUE
+      CALL SEQREW(NFT12)
+      DSKWRK = SVDSKW
+      CALL RSM_MATRDS(IW,X(LDM1),NORB,NCOR,NA,NB,X(LCI),NCI,
+     *            X(LIFA),X(LIWRK1),IIS,X(LIBO),IGPDET,KSTSYM,NSYM,
+     *            MXNZW,IWTS,WSTATE,X(LWST),K)
+C
+C        output of density matrices
+C
+      CUTOFF = MAX(1.0D-11,10.0D+00**(-ICUT))
+C
+      CALL RSM_WTDM1(X(LDM1),X(LV),X(LLBABL),M1,M2,X(LWRK),NOCC1,NOCC2,
+     *               NCORSV,L1,CUTOFF,DAO)
+C
+      CALL RETFM(NEED1)
+      CALL RETFM(NEED)
+      RETURN
+      END
+C*MODULE RSM_GMS_MCSCF  *DECK RSM_MATRDS
+C>
+C>    @brief   returns the state averaged 1 particle density matrix in DEN
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IW: file number pf output file
+C>             DEN: 1 particle density matrix
+C>             NORB: total number of orbitals
+C>             NCOR: number of core orbitals
+C>             NA: number of active alpha electrons
+C>             NB: number of active beta electrons
+C>             CI: array containing the coefficients of the determinants
+C>             NCI: number of determinants
+C>             IFA:scratch array of dimension above
+C>             IWRK:scratch and contains some important information
+C>             IIS: size of iwrk
+C>             IOX: symmetry of orbital 
+C>             IDSYM: the point group
+C>             ISYM1: = irrep
+C>             NSYM: 2**(idsym)
+C>             NSTATE: number of states to be averaged
+C>             IWTS: the array of CI vector
+C>             WSTATE: weight vector
+C>             W: weight of vector
+C>             MXSTAT: = iwh(nstate)
+C>
+      SUBROUTINE RSM_MATRDS(IW,DEN,NORB,NCOR,NA,NB,CI,NCI,
+     *               IFA,IWRK,IIS,IOX,IDSYM,ISYM1,NSYM,
+     *               NSTATE,IWTS,WSTATE,W,MXSTAT)
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: IW, NORB, NCOR, NA, NB, 
+     *                                   IOX(NORB-NCOR), IWTS(*), NCI, 
+     *                                   NSYM, IDSYM, ISYM1, IIS,
+     *                                   NSTATE, MXSTAT
+      INTEGER,          INTENT(  OUT) :: IFA(0:NORB-NCOR,0:NORB-NCOR),
+     *                                   IWRK(IIS)
+      DOUBLE PRECISION, INTENT(IN   ) :: CI(NCI,MXSTAT), WSTATE(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: DEN(*), W(NSTATE)
+C
+      INTEGER                :: NACT, NALP, NBLP, IACON1, IBCON1,
+     *                          IACON2, IBCON2, IPOSA, IPERA, IIND1,
+     *                          INDEX, IMMA, IMMC, ISYMA, ISYMB, ICOA,
+     *                          ICOB, ITAB, IMUL, ISPA, ISPB, ISAS,
+     *                          ISBS, ISAC, ISBC, ISTRB, ISTRP, ISTAR, 
+     *                          ITOT
+C
+      NACT = NORB - NCOR
+      NALP = IFA(NACT,NA)
+      NBLP = IFA(NACT,NB)
+C
+      IACON1 = 1
+      IBCON1 = IACON1 + NA + 43
+      IACON2 = IBCON1 + NA
+      IBCON2 = IACON2 + NA
+      IPOSA  = IBCON2 + NB
+      IPERA  = IPOSA + (NA*(NACT-NA))
+      IIND1  = IPERA + (NA*(NACT-NA))
+      INDEX  = IIND1 + (NA*(NACT-NA))
+      IMMA   = INDEX + ((NACT*(NACT+1))/2)**2
+      IMMC   = IMMA + NSYM*(NA*(NACT-NA))
+      ISYMA  = IMMC + NSYM
+      ISYMB  = ISYMA + NALP
+      ICOA   = ISYMB + NBLP
+      ICOB   = ICOA + NSYM
+      ITAB   = ICOB + NSYM
+      IMUL   = ITAB + NSYM
+      ISPA   = IMUL + NSYM*NSYM
+      ISPB   = ISPA + NALP
+      ISAS   = ISPB + NBLP
+      ISBS   = ISAS + NSYM+1
+      ISAC   = ISBS + NSYM+1
+      ISBC   = ISAC + NALP
+      ISTRB  = ISBC + NBLP
+      ISTRP  = ISTRB + ((NB*(NORB-NCOR-NB))*NBLP)/2
+      ISTAR  = ISTRP + ((NB*(NORB-NCOR-NB))*NBLP)/2
+      ITOT   = ISTAR + NBLP - 1
+C
+      CALL SYMWRK(IW,IOX,NACT,NA,NB,IDSYM,ISYM1,NSYM,NALP,NBLP,IWRK,
+     *     IWRK(ISYMA),IWRK(ISYMB),IWRK(ICOA),IWRK(ICOB),IWRK(ITAB),
+     *     IWRK(IMUL),IWRK(ISPA),IWRK(ISPB),IWRK(ISAS),IWRK(ISBS),
+     *     IWRK(ISAC),IWRK(ISBC))
+C
+      CALL SETUP(NORB,NCOR,NA,NB,IWRK(IBCON1),
+     *           IWRK(IACON2),IFA,IWRK(INDEX),IWRK(ISPB),NBLP,
+     *           IWRK(ISTRB),IWRK(ISTRP),IWRK(ISTAR))
+C
+      CALL RSM_MATRD2(DEN,NACT,0,NA,NB,CI,NCI,NALP,NBLP,
+     *            IFA,NSTATE,IWTS,WSTATE,W,MXSTAT,IOX,
+     *            NSYM,IWRK(IACON1),IWRK(IBCON1),IWRK(IACON2),
+     *            IWRK(IPOSA),IWRK(IPERA),IWRK(INDEX),IWRK(ISYMA),
+     *            IWRK(ISYMB),IWRK(ITAB),IWRK(ISPA),IWRK(ISPB),
+     *            IWRK(ISAS),IWRK(ISBS),IWRK(ISAC),IWRK(ISBC))
+C
+      RETURN
+      END
+
+C*MODULE RSM_GMS_MCSCF  *DECK RSM_MATRD2
+C>
+C>    @brief   main subroutine to compute 1 particle density matrix
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   DEN: 1 particle density matrix
+C>             NORB: total number of orbitals
+C>             NCOR: number of core orbitals
+C>             NA: number of active alpha electrons
+C>             NB: number of active beta electrons
+C>             CI: array containing the coefficients of the determinants
+C>             NCI: number of determinants
+C>             NALP: number of alpha space functions 
+C>             NBLP: number of beta space functions
+C>             IFA: list of binomial coefficients
+C>             NSTATE: number of states to be averaged
+C>             IWTS: the array of CI vector
+C>             WSTATE: weight vector
+C>             W: weight of vector
+C>             MXSTAT: = iwh(nstate)
+C>             IOX: symmetry of orbital
+C>             NSYM: 2**(idsym)
+C>             IACON1: working array
+C>             IBCON1: working array
+C>             IACON2: working array
+C>             IPOSA: working array?
+C>             IPERA: working array
+C>             INDEX: =IA
+C>             ISYMA: symmetry for active alpha electrons
+C>             ISYMB: symmetry for active beta electrons
+C>             ITAB: table for symmetry groups
+C>             ISPA: index for alpha electrons
+C>             ISPB: index for beta electrons
+C>             ISAS: index for symmetry about alpha electrons
+C>             ISBS: index for symmetry about beta electrons
+C>             ISAC: index for alpha electrons
+C>             ISBC: index for beta electrons
+C>
+
+      SUBROUTINE RSM_MATRD2(DEN,NORB,NCOR,NA,NB,CI,NCI,NALP,NBLP,
+     *                      IFA,NSTATE,IWTS,WSTATE,W,MXSTAT,IOX,
+     *                      NSYM,IACON1,IBCON1,IACON2,IPOSA,IPERA,INDEX,
+     *                      ISYMA,ISYMB,ITAB,ISPA,ISPB,ISAS,ISBS,ISAC,
+     *                      ISBC)
+C
+      IMPLICIT NONE
+C
+      INTEGER, INTENT(IN   ) :: NORB, NCOR, NA, NB, NCI, NALP, NBLP, 
+     *                          ISPA(NALP), ISPB(NBLP), IOX(NORB-NCOR),
+     *                          ISYMA(NALP), ISYMB(NBLP), ITAB(NSYM),
+     *                          IFA(0:NORB-NCOR,0:NORB-NCOR),IWTS(*),
+     *                          ISAS(*),ISBS(*),ISAC(*),ISBC(*), MXSTAT,
+     *                          NSYM, NSTATE
+      DOUBLE PRECISION, INTENT(IN   ) :: CI(NCI,MXSTAT),WSTATE(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: DEN(*), W(*)
+C
+      INTEGER                :: NAT, NBT, INDEX((NORB*(NORB+1))/2,*),
+     *                          IACON1(NA+NCOR),IBCON1(NA+NCOR),
+     *                          IACON2(NA+NCOR),IPOSA(*),IPERA(*)
+      INTEGER                :: I, J, II, JJ, KKI, KKJ, INBB, JJI, IJK,
+     *                          I1, IA, IND, IPET, IB, INA1, INB1, IND1,
+     *                          IPER, IPER1, ICAB, ISB1, IST1, IST, IEN,
+     *                          IS1, IS2, ISA1, IPB1, IAC, NACT, NTOT,
+     *                          ICAT, ICIT, ICIA, NEND, ITAS, ICONST,
+     *                          MY_TASK, IO1, ICI2
+      DOUBLE PRECISION       :: FC
+C     EXTERNAL
+      INTEGER POSDET
+
+      ICONST = 2
+      IF (NA.EQ.NB) ICONST = 4
+      DO IST=1,NSTATE
+!       print *,ist,iwts(ist),WSTATE(IWTS(IST))
+        W(IST) = WSTATE(IWTS(IST))
+      ENDDO
+C
+      DO I=1,(NORB*(NORB+1))/2
+        DO J=1,I
+          INDEX(I,J) = I*(I-1)/2 + J
+          INDEX(J,I) = INDEX(I,J)
+        ENDDO
+      ENDDO
+C
+      NACT = NORB - NCOR
+      NAT = NA + NCOR
+      NBT = NB + NCOR
+C
+      NTOT = NORB*(NORB+1)/2
+      DO I=1,NTOT
+         DEN(I) = 0.0D+00
+      ENDDO
+C
+      DO I=1,NAT
+        IACON1(I) = I
+      ENDDO
+C
+      CALL DDI_DLBRESET()
+      CALL DDI_DLBNEXT(MY_TASK)
+C
+C   Big Loop over all alpha determinants
+C
+      DO IJK = 1,NALP
+        IF (IJK-1.EQ.MY_TASK) THEN
+C
+C  Alpha excitations here
+C   Single first
+C
+          IAC = 0
+          ICAT = ISPA(IJK)
+          ISA1 = ISYMA(IJK)
+          ITAS = ITAB(ISA1)
+          DO IA=NCOR+1,NAT
+            IO1 = IACON1(IA)
+            IS1 = IOX(IO1)
+            IST = IO1 + 1
+            IEN = IACON1(IA+1)-1
+            IF (IA.EQ.NAT) IEN=NORB
+            DO KKJ=IA-NCOR+1,NA+1
+              DO JJ=IST,IEN
+                IS2 = IOX(JJ)
+C
+                IAC = IAC + 1
+                CALL RET1DET(IACON1,IACON2,NA,IA,JJ,NCOR,KKJ,IPER1)
+C
+C   Storage here for later use, well worth it
+C
+                IPET = POSDET(NACT,NA,IACON2,IFA)
+                IPOSA(IAC) = ISPA(IPET)
+                IPERA(IAC) = ((-1)**IPER1)*ICONST
+                IND = INDEX(JJ,IO1)
+Cc If deoccupied and newly occupied orbitals are of diff symm,
+C  skip to doubles
+                IF (IS1.NE.IS2) GOTO 417
+C
+C    Loop over beta dets of the right symmetry
+                DO INBB = ISBS(ISA1),ISBS(ISA1+1)-1
+                  INB1 = ISBC(INBB)
+                  ICIT = ICAT+ISPB(INB1)
+                  ICI2 = IPOSA(IAC) + ISPB(INB1)
+CState average here
+                  FC = 0.0D+00
+                  DO KKI=1,NSTATE
+                    FC = FC + W(KKI)*CI(ICIT,KKI)*CI(ICI2,KKI)
+!                   print *,W(KKI),CI(ICIT,KKI),CI(ICI2,KKI)
+                  ENDDO
+C
+                  FC = FC*IPERA(IAC)
+C
+                  DEN(IND) = DEN(IND) + FC
+                ENDDO
+C
+  417           CONTINUE
+              ENDDO
+              IST = IACON1(KKJ+NCOR)+1
+              IEN = IACON1(NCOR+KKJ+1)-1
+              IF (KKJ.EQ.NA) IEN=NORB
+            ENDDO
+          ENDDO
+C
+C  Diagonal
+C
+          DO II=1,NAT
+            I1 = IACON1(II)
+            IND1 = INDEX(I1,I1)
+C
+            DO INB1 = ISBS(ISA1),ISBS(ISA1+1)-1
+              NEND = ISBC(INB1)
+              ICIT = ICAT+ISPB(NEND)
+C State average here
+              FC = 0.0D+00
+              DO KKI=1,NSTATE
+                FC = FC + W(KKI)*CI(ICIT,KKI)*CI(ICIT,KKI)
+              ENDDO
+C
+              DEN(IND1) = DEN(IND1) + FC
+            ENDDO
+          ENDDO
+C
+          CALL DDI_DLBNEXT(MY_TASK)
+        END IF     ! MY TASK
+C
+        CALL ADVANC(IACON1,NAT,NORB)
+      ENDDO
+C
+C   Now for the Beta part
+C
+      DO JJI=1,NBT
+         IBCON1(JJI) = JJI
+      ENDDO
+C
+      DO IJK = 1,NBLP
+C
+        IF (IJK+NALP-1.EQ.MY_TASK) THEN
+C
+          ICAB = ISPB(IJK)
+          ISB1 = ISYMB(IJK)
+C itb1 = itab(isb1)
+          IF (NA.EQ.NB) GOTO 7999
+C
+          DO IB=NCOR+1,NBT
+            IST = IBCON1(IB)+1
+            IEN = IBCON1(IB+1)-1
+            IF (IB.EQ.NBT) IEN=NORB
+            IO1 = IBCON1(IB)
+            IS1 = IOX(IO1)
+            DO KKJ=IB-NCOR+1,NB+1
+              DO JJ=IST,IEN
+                IS2 = IOX(JJ)
+C
+                CALL RET1DET(IBCON1,IACON2,NB,IB,JJ,NCOR,KKJ,IPER1)
+                IPER = ((-1)**IPER1)*2
+                IND = INDEX(JJ,IO1)
+Cc If deoccupied and newly occupied are of diff sym, then skip to doubles
+                IF (IS1.NE.IS2) GOTO 517
+                IPB1 = POSDET(NACT,NB,IACON2,IFA)
+                IPB1 = ISPB(IPB1)
+C
+C  Loop over alpha
+C
+                DO INA1 = ISAS(ISB1),ISAS(ISB1+1)-1
+                  ICIA = ISAC(INA1)
+                  ICIT = ISPA(ICIA) + ICAB
+                  ICI2 = ISPA(ICIA) + IPB1
+CState average
+                  FC = 0.0D+00
+                  DO KKI=1,NSTATE
+                    FC = FC + W(KKI)*CI(ICIT,KKI)*CI(ICI2,KKI)
+                  ENDDO
+                  FC = FC*IPER
+C
+                  DEN(IND) = DEN(IND) + FC
+                ENDDO
+C
+  517           CONTINUE
+              ENDDO
+              IST = IBCON1(KKJ+NCOR)+1
+              IEN=IBCON1(NCOR+KKJ+1)-1
+              IF (KKJ.EQ.NB) IEN=NORB
+            ENDDO
+          ENDDO
+C
+C    Remaining part of diagonal contributions
+C
+ 7999     CONTINUE
+          DO II=1,NBT
+            I1 = IBCON1(II)
+            IND1 = INDEX(I1,I1)
+            DO INA1 = ISAS(ISB1),ISAS(ISB1+1)-1
+              NEND = ISAC(INA1)
+              ICIA = ISPA(NEND)
+              ICIT = ICIA + ICAB
+CState average
+              FC = 0.0D+00
+              DO KKI=1,NSTATE
+                FC = FC + W(KKI)*CI(ICIT,KKI)*CI(ICIT,KKI)
+              ENDDO
+C
+              DEN(IND1) = DEN(IND1) + FC
+            ENDDO
+          ENDDO
+C
+          CALL DDI_DLBNEXT(MY_TASK)
+        END IF     ! MY TASK
+C
+        CALL ADVANC(IBCON1,NBT,NORB)
+      ENDDO
+C
+C       finish parallel run by global sum of 1 and 2 particle density
+C
+      CALL DDI_GSUMF(2502,DEN,NTOT)
+      CALL DDI_DLBRESET()
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_MCSCF  *DECK RSM_WTDM1
+C>
+C>    @brief   compute density matrix in AO 
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   DM1: density matrix of active orbital
+C>             V: molecular orbital
+C>             LBABEL: orbitals a symmetry label
+C>             M1: number of active MOs
+C>             M2: (M1*M1+M1)/2
+C>             WRK: working array
+C>             NOCC1: number of core and active orbitals
+C>             NOCC2: (NOCC1*NOCC1+NOCC1)/2
+C>             NCORE: number of core orbitals
+C>             NUM: number of atomic orbitals
+C>             CUTOFF: cutoff
+C>             DAO: density matrix in AO
+C>
+      SUBROUTINE RSM_WTDM1(DM1,V,LBABEL,M1,M2,WRK,NOCC1,NOCC2,NCORE,
+     *                     NUM,CUTOFF,DAO)
+C
+      use mx_limits, only: mxao
+C
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: LBABEL(M1),M1,M2,NOCC1,NOCC2,
+     *                                   NCORE,NUM
+      DOUBLE PRECISION, INTENT(IN   ) :: V(NUM,*), CUTOFF
+      DOUBLE PRECISION, INTENT(INOUT) :: DM1(M2)
+      DOUBLE PRECISION, INTENT(  OUT) :: WRK(NOCC2), DAO(*)
+C
+      INTEGER :: IA
+      COMMON /IJPAIR/ IA(MXAO)
+
+      INTEGER :: IR, IW, IP, IS, IJKT, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IJKT,IDAF,NAV,IODA(950)
+
+      INTEGER :: ME, MASTER, NPROC, IBTYP, IPTIM
+      LOGICAL :: GOPARR,DSKWRK,MASWRK
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+C
+      DOUBLE PRECISION, PARAMETER :: HALF=0.5D+00, TWO=2.0D+00
+C
+      INTEGER :: MULT8(8),LKUPSM(64),NFTARR(5)
+      DATA MULT8/0,8,16,24,32,40,48,56/
+      DATA LKUPSM/1,2,3,4,5,6,7,8,
+     *            2,1,4,3,6,5,8,7,
+     *            3,4,1,2,7,8,5,6,
+     *            4,3,2,1,8,7,6,5,
+     *            5,6,7,8,1,2,3,4,
+     *            6,5,8,7,2,1,4,3,
+     *            7,8,5,6,3,4,1,2,
+     *            8,7,6,5,4,3,2,1/
+C
+      INTEGER :: I, J, M, N, II, JJ, IJ, MN, ISYM, IBAD, JBAD, IV, IC,
+     *           IJV, IJC, IJMUL, IJSYM, NERR, N3
+      DOUBLE PRECISION :: THRSH, SMALL, DUM, DNORB
+C
+C     ----- write -DM1-  -----
+C
+      THRSH = 1.0D+01*CUTOFF
+C
+      DO I=1,M1
+        IF(LBABEL(I).EQ.0) THEN
+          IBAD = I+NCORE
+          IF(MASWRK) WRITE(IW,9000) IBAD
+          CALL ABRT
+        END IF
+      ENDDO
+C
+      CALL DSCAL(M2,HALF,DM1,1)
+C
+      SMALL = 1.0D-07
+      NERR = 0
+      IJ = 0
+      DO I=1,M1
+        ISYM = LBABEL(I)
+        DO J=1,I
+          IJ = IJ+1
+          IJMUL = MULT8(ISYM)+LBABEL(J)
+          IJSYM = LKUPSM(IJMUL)
+          IF(IJSYM.NE.1) THEN
+            IF(ABS(DM1(IJ)).LT.THRSH) THEN
+              DM1(IJ) = 0.0D+00
+            ELSE
+              IBAD = I+NCORE
+              JBAD = J+NCORE
+              IF(MASWRK) WRITE(IW,9010) IBAD,JBAD,DM1(IJ)
+              IF(MASWRK) WRITE(IW,9030)
+              CALL ABRT
+            END IF
+          END IF
+        ENDDO
+        DM1(IJ)  = DM1(IJ)  + DM1(IJ)
+        IF(DM1(IJ).LT.SMALL) THEN
+          IF(MASWRK) WRITE(IW,9040) I,DM1(IJ)
+          NERR=NERR+1
+        END IF
+      ENDDO
+C
+      IF(NERR.GT.0) THEN
+         IF(MASWRK) WRITE(IW,*) 'CHECK YOUR ACTIVE SPACE CAREFULLY.'
+         IF(MASWRK) WRITE(IW,*) 'THE 1ST ORDER DENSITY MATRIX IS:'
+         CALL PRTRI(DM1,M1)
+         CALL ABRT
+      END IF
+C
+C     ----- output first order density in MO basis -----
+C     generate mo density over all orbitals, including core
+C
+      CALL VCLR(WRK,1,NOCC2)
+      II = 0
+      DO I=1,NCORE
+         II = II+I
+         WRK(II) = TWO
+      ENDDO
+      DO I=1,M1
+         IV = IA(I)
+         IC = IA(I+NCORE)
+         DO J=1,I
+           IJV = IV + J
+           IJC = IC + J + NCORE
+           WRK(IJC) = DM1(IJV)
+         ENDDO
+      ENDDO
+C
+C     write -dm1- without core orbitals to daf record 320
+C     write -dm1- with    core orbitals to daf record 68
+C     write -dm1- with    core orbitals after -dm2- on file -nfto-
+C
+      CALL RSM_DAWR(DM1,M2,112,0)
+!     CALL DAWRIT(IDAF,IODA,DM1,   M2,320,0)
+!     CALL DAWRIT(IDAF,IODA,WRK,NOCC2, 68,0)
+C
+C
+C     ----- FORM TOTAL DENSITY MATRIX IN -AO- BASIS -----
+C
+      N3=NUM*NUM
+      CALL DAREAD(IDAF,IODA,V,N3,15,0)
+
+      MN=0
+      DO M=1,NUM
+        DO N=1,M
+          DUM=0.0D+00
+          DO I=1,NOCC1
+            DO J=1,NOCC1
+              II=MAX(I,J)
+              JJ=MIN(I,J)
+              IJ=IA(II)+JJ
+              DNORB=WRK(IJ)
+              DUM=DUM+DNORB*V(M,I)*V(N,J)
+            ENDDO
+          ENDDO
+          MN=MN+1
+          DAO(MN)=DUM
+        ENDDO
+      ENDDO
+
+      RETURN
+C
+ 9000 FORMAT(1X,'UNABLE TO SIFT DENSITY MATRIX, ORBITAL',I5,
+     *          ' HAS UNKNOWN SYMMETRY.')
+ 9010 FORMAT(/1X,'INACCURATE 1ST ORDER DENSITY MATRIX ELEMENT FOUND,'/
+     *       1X,'GAMMA(',2I5,')=',E20.10,' FOUND, IT SHOULD BE ZERO'/
+     *       1X,'BY SYMMETRY.')
+ 9030 FORMAT(/1X,'LOSS OF SYMMETRY IN THE DENSITY MATRIX MAY BE DUE TO'/
+     *       1X,'    UNSYMMETRICAL ORBITALS: CHECK $VEC GROUP,'/
+     *       1X,'         ADJUST $GUESS TOLZ=1.0D-5 TOLE=1.0D-04'/
+     *       1X,'    OR, UNSYMMETRICAL CI ROOT: $DET CVGTOL=5.0D-06')
+ 9040 FORMAT(1X,'***** ERROR: ACTIVE ORBITAL',I3,
+     *          ' HAS VERY SMALL OCCUPATION NUMBER=',1P,E13.6)
+      END
+C*MODULE RSM_GMS_MCSCF  *DECK RSM_CALFCV
+C>
+C>    @brief   compute density matrix of state-averaged state
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MASWRK: master node or not
+C>             NUM: number of AOs
+C>             NQMT: number of MOs
+C>
+ 
+      SUBROUTINE RSM_CALFCV(MASWRK,NUM,NQMT)
+C
+      use mx_limits, only: mxrt
+
+      USE ABSMOD,    ONLY : NQMT0A, IFITU
+      USE RSMSED,    ONLY : QMT, VPR
+      USE RISM_MOD,  ONLY : IROOT, NU, NV, NTAB, ET0, FQS
+C
+      IMPLICIT NONE
+C
+      INTEGER :: IR, IW_GMS, IP, IS, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW_GMS,IP,IS,IPK,IDAF,NAV,IODA(950)
+
+      INTEGER :: NFLGDM, IWTS_GMS, NCORSV, NCOR, NACT, NORB, NA, NB, K,
+     *           KST, IROOT_GMS, IPURES, MAXW1, NITER, MAXP, NCI,
+     *           IGPDET, KSTSYM, NFTGCI, IDWEIGH, IFTS
+      DOUBLE PRECISION :: W_GMS, SPINS, CRIT, PRTTOL, SDET, SZDET,
+     *                    GRPDET, STSYM, GLIST, DWPARM, FSTATE
+      COMMON /DETWFN/ W_GMS(MXRT),SPINS(MXRT),CRIT,PRTTOL,SDET,SZDET,
+     *                GRPDET,STSYM,GLIST,DWPARM,
+     *                NFLGDM(MXRT),IWTS_GMS(MXRT),NCORSV,NCOR,NACT,NORB,
+     *                NA,NB,K,KST,IROOT_GMS,IPURES,MAXW1,NITER,MAXP,NCI,
+     *                IGPDET,KSTSYM,NFTGCI,IDWEIGH,
+     *                fstate(mxrt),ifts(mxrt)
+C
+      LOGICAL, INTENT(IN   ) :: MASWRK
+      INTEGER, INTENT(IN   ) :: NUM, NQMT
+C
+      INTEGER, ALLOCATABLE   :: IA(:,:)
+      DOUBLE PRECISION, ALLOCATABLE :: QMTP(:,:),DMTX(:),DMTA(:),DA(:),
+     *                                 XMT(:),ZMT(:),WRK(:),FCVAO(:)
+C
+      INTEGER                :: L2
+C
+      L2 = NUM*(NUM+1)/2
+      ALLOCATE(QMTP(NQMT0A+1,NQMT0A+1),DMTX(NQMT0A+1),DMTA(NQMT0A+1),
+     *         DA(L2),XMT(NQMT0A*NQMT0A),ZMT(NQMT0A),
+     *         WRK(NQMT0A+1),FCVAO(L2),IA(NUM,NUM))
+C
+C     GET DMT[AVG]
+C
+      IF(MASWRK) THEN
+        WRITE(IW_GMS,*)          ''
+        WRITE(IW_GMS,'(10X,A36)')'------------------------------------'
+        WRITE(IW_GMS,'(10X,A36)')' cSED CHARGES of THE AVERAGED STATE '
+        WRITE(IW_GMS,'(10X,A36)')'------------------------------------'
+      ENDIF
+
+      CALL DAREAD(IDAF,IODA,DA,L2,16,0)
+      CALL RSM_CLDMT1(DA,DMTA)
+      CALL RSM_DAWR(DMTA,NQMT0A+1,113,0)
+C
+C
+C     DEALLOCATE MEMORY
+C
+      DEALLOCATE(QMTP,DMTX,DMTA,DA,XMT,ZMT,WRK,FCVAO,IA)
+      END
+C*MODULE RSM_GMS_MCSCF  *DECK RSM_GETEDAT_MCSCF1
+C>
+C>    @brief   get energy of the (averaged) state 
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   E8: solute-solvent interaction (P*F(solvated])
+C>             E2: solute-solvent interaction (V*d[avg])
+C>             E2X: solute-solvent interaction (V*d[target])
+C>
+
+      SUBROUTINE RSM_GETEDAT_MCSCF1(E8,E2,E2X)
+C
+      USE ABSMOD, ONLY : NQMT0A
+      USE RSMSED, ONLY : NUM
+C
+      IMPLICIT NONE
+C
+      INTEGER                         :: IR,IW,IP,IJKO,IJKT,IDAF,NAV,
+     *                                   IODA
+      COMMON /IOFILE/ IR,IW,IP,IJKO,IJKT,IDAF,NAV,IODA(950)
+C
+      DOUBLE PRECISION, INTENT(  OUT) :: E8, E2, E2X
+
+      DOUBLE PRECISION, ALLOCATABLE   :: DA(:), H1(:), DMT(:), VPR(:)
+C
+      DOUBLE PRECISION                :: TRACEP
+      INTEGER                         :: L1, L2, NSTATAVG, IDEGAVG, I
+C
+      L1 = NUM
+      L2 = NUM*(NUM+1)/2
+C
+C     MEMORY ALLOCATION
+C
+      ALLOCATE(DA(L2),H1(L2),DMT(NQMT0A+1),VPR(NQMT0A+1))
+C
+C     CHECK NSTATAVG
+C
+      CALL STAVGCHK(NSTATAVG,IDEGAVG)
+C
+C     READ SOLVATED FOCK (15) and DA
+C
+      CALL RSM_DARE(H1,L2,15,0)
+      CALL DAREAD(IDAF,IODA,DA,L2,16,0)
+C
+      E8 = TRACEP(DA,H1,L1)
+C
+C     CALCUALTE E2 & E2X
+C
+      IF(NSTATAVG == 1) THEN
+        E2  = 0.0D+00
+        E2X = 0.0D+00
+      ELSE
+        CALL RSM_DARE(VPR,NQMT0A+1,6,0)
+C
+C       READ DMT(AVG)
+C
+        CALL RSM_DARE(DMT,NQMT0A+1,113,0)
+
+        E2 = 0.0D+00
+        DO I=1,NQMT0A
+          E2 = E2 + DMT(I)*VPR(I)
+        ENDDO
+C
+C       READ DMT(X)
+C
+        CALL RSM_DARE(DMT,NQMT0A+1,24,0)
+
+        E2X = 0.0D+00
+        DO I=1,NQMT0A
+          E2X = E2X + DMT(I)*VPR(I)
+        ENDDO
+      ENDIF
+C
+      DEALLOCATE(DA,H1,DMT,VPR)
+C
+      RETURN
+      END
+
+C*MODULE RSM_GMS_MCSCF  *DECK RSM_GETEDAT_MCSCF2
+C>
+C>    @brief   get energy of the target state 
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MASWRK: master node or not
+C>             IW: file number of output file
+C>             L1: number of AOs
+C>             L2: (L1*L1 + L1)/2
+C>             IROOT: (not used)
+C>             ISTATE: target state
+C>             ESTATE: energies of states
+C>
+
+      SUBROUTINE RSM_GETEDAT_MCSCF2(MASWRK,IW,L1,L2,IROOT,ISTATE,ESTATE)
+
+      USE ABSMOD,   ONLY : NQMT0A
+      USE RISM_MOD, ONLY : FRISM
+
+      IMPLICIT NONE
+C
+      LOGICAL,          INTENT(IN   ) :: MASWRK
+      INTEGER,          INTENT(IN   ) :: IW, L1, L2, IROOT, ISTATE
+      DOUBLE PRECISION, INTENT(INOUT) :: ESTATE
+C
+      INTEGER                :: I
+
+      DOUBLE PRECISION,   ALLOCATABLE :: H1(:), DA(:), DMT(:), VPR(:)
+      DOUBLE PRECISION                :: E8, E2, E2X
+C
+      DOUBLE PRECISION                :: TRACEP
+C
+      ALLOCATE(H1(L2),DA(L2),DMT(NQMT0A+1),VPR(NQMT0A+1))
+C
+C     GET VPR
+C
+      CALL RSM_DARE(VPR,NQMT0A+1,6,0)
+C
+C     GET E8
+C
+      CALL RSM_DARE(H1,L2,15,0)
+      CALL RSM_DETDM2(ISTATE,DA)
+
+      E8 = TRACEP(DA,H1,L1)
+C
+C     GET E2
+C
+      IF(MASWRK) THEN
+        WRITE(IW,*)           ''
+        WRITE(IW,'(10X,A36)') '------------------------------------'
+        WRITE(IW,'(10X,A20,I2,A5)')' cSED CHARGES of THE',ISTATE,'STATE'
+        WRITE(IW,'(10X,A36)') '------------------------------------'
+      ENDIF
+      CALL RSM_CLDMT1(DA,DMT)
+
+      E2 = 0.0D+00
+      DO I=1,NQMT0A
+        E2 = E2 + DMT(I)*VPR(I)
+      ENDDO
+C
+C     GET E2X
+C
+      CALL RSM_DARE(DMT,NQMT0A+1,24,0)
+
+      E2X = 0.0D+00
+      DO I=1,NQMT0A
+        E2X = E2X + DMT(I)*VPR(I)
+      ENDDO
+C
+C     MODIFY ESTATE
+C
+!     print *,E8,E2
+      ESTATE = ESTATE - E8 + E2 - E2X + FRISM
+
+      DEALLOCATE(H1,DA,DMT,VPR)
+
+      RETURN
+      END
+
+C*MODULE RSM_GMS_MCSCF  *DECK RSM_RDSLVFCK
+C>
+C>    @brief   read solvated Fock matrix
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MASWRK: master node or not
+C>             GOPARR: parallel calculation or not
+C>             MASTER: indicates the master process 
+C>             NUM: the number of AOs
+C>
+      SUBROUTINE RSM_RDSLVFCK(MASWRK,GOPARR,MASTER,NUM)
+      IMPLICIT NONE
+
+      LOGICAL, INTENT(IN   ) :: MASWRK, GOPARR
+      INTEGER, INTENT(IN   ) :: MASTER, NUM
+C
+      INTEGER :: IR, IW, IP, IJK, IJKT, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IJK,IJKT,IDAF,NAV,IODA(950)
+C
+      DOUBLE PRECISION, ALLOCATABLE    :: FCK(:), SFCK(:)
+C
+      INTEGER                :: I, J, IEOF, L2, K, K4, KM
+C
+C     CHECK $SLVFCK
+C
+      CALL SEQREW(IR)
+      CALL FNDGRP(IR,' $SLVFCK',IEOF)
+      IF(IEOF.NE.0) RETURN
+C
+C
+C
+      L2 = NUM*(NUM+1)/2
+      ALLOCATE(FCK(L2),SFCK(L2))
+C
+C     READ BARE FOCK
+C
+      CALL DAREAD(IDAF,IODA,FCK,L2,11,0)
+C
+C     GET SLVFCK
+C
+      IF(MASWRK) THEN
+        WRITE(IW,'(A18)') ' WE FOUND $SLVFCK.'
+
+        K4 = L2/4
+        KM = L2 - 4*K4
+
+        K = 0
+        DO I=1,K4
+          READ(IR,'(1X,4(1PE20.12))') (SFCK(K+J),J=1,4)
+          K = K + 4
+        ENDDO
+        IF(KM /= 0) READ(IR,'(1X,4(1PE20.12))') (SFCK(K+J),J=1,KM)
+      ENDIF
+       
+      IF (GOPARR) CALL DDI_BCAST(350,'F',SFCK,L2,MASTER)
+C
+C     SAVE HCORE + SLVFCK
+C
+      DO I=1,L2
+        FCK(I) = FCK(I) + SFCK(I)
+      ENDDO
+ 
+      CALL DAWRIT(IDAF,IODA,FCK,L2,11,0)
+      CALL RSM_DAWR(SFCK,L2,15,0)
+
+      DEALLOCATE(FCK,SFCK)
+
+      RETURN
+      END
+C*MODULE RSM_GMS_MCSCF  *DECK RSM_SVSLVFCK
+C>
+C>    @brief   save solvated Fock matrix
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MASWRK: master node or not
+C>             IP: the file number of dat file
+C>             L2: L1*(L1+1)/2, where L1 is the number of AOs
+C>
+
+      SUBROUTINE RSM_SVSLVFCK(MASWRK,IP,L2)
+      IMPLICIT NONE
+C
+      LOGICAL, INTENT(IN   ) :: MASWRK
+      INTEGER, INTENT(IN   ) :: IP, L2
+C
+      INTEGER                :: I, J, K, K4, KM
+      DOUBLE PRECISION, ALLOCATABLE    :: SFCK(:)
+
+      ALLOCATE(SFCK(L2))
+C
+C     READ Solvated Fock
+C
+      CALL RSM_DARE(SFCK,L2,15,0)
+C
+C     WRITE SFCK
+C
+      K4 = L2/4
+      KM = L2 - 4*K4
+C
+      IF(MASWRK) THEN
+        WRITE(IP,'(A8)') ' $SLVFCK'
+
+        K = 0
+        DO I=1,K4
+          WRITE(IP,'(1X,4(1PE20.12))') (SFCK(K+J),J=1,4)
+          K = K + 4
+        ENDDO
+        IF(KM /= 0) WRITE(IP,'(1X,4(1PE20.12))') (SFCK(K+J),J=1,KM)
+
+        WRITE(IP,'(A5)') ' $END'
+      ENDIF
+
+      DEALLOCATE(SFCK)
+C
+      RETURN
+      END
+
+

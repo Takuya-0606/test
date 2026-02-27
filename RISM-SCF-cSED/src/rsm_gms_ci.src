@@ -1,0 +1,297 @@
+C*MODULE RSM_GMS_CI  *DECK RSM_CALD_MCPT
+C>
+C>    @brief   compute the one-electron density matrix
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IROOT: the root whose density is computed
+C>             LUNFT0: the file number of coupling coefficient file
+C>             NCI: total number of csfs
+C>             NSTATE: the number of states
+C>             NMO: the number of molecular orbitals
+C>             NDOUB: the number of doubly occupied orbitals
+C>             NMOACT: the number of active orbitals
+C>             NGO: the number of atomic orbitals
+C>             MAXCSF: maximum length for one-particle coupling constant used
+C>                     in cas-ci calculation
+C>             EIGVEC: CAS-CI eigenvectors
+C>             AVECOE: weight of the each state in computing (averaged) density 
+C>                     matrix 
+C>             CMOOLD: molecular orbitals
+C>             GEN1AO: one-particle density matrix on ao base
+C>             GEN1: one-particle density matrix
+C>             LABEL1: label used in mcqdpt code
+C>             WORKGE: working array
+C>
+      SUBROUTINE RSM_CALD_MCPT(IROOT,LUNFT0,NCI,NSTATE,NMO,NDOUB,
+     *                       NMOACT,NGO,MAXCSF,
+     *                       EIGVEC,AVECOE,CMOOLD,GEN1AO,GEN1,LABEL1,
+     *                       WORKGE)
+C
+      IMPLICIT NONE
+C
+      INTEGER :: IR, IW, IP, IS1, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IS1,IPK,IDAF,NAV,IODA(950)
+
+      INTEGER :: ME, MASTER, NPROC, IBTYP, IPTIM
+      LOGICAL GOPARR,DSKWRK,MASWRK
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+
+      INTEGER :: NWFT0, NWFT0P
+      COMMON /MQFT02/NWFT0,NWFT0P
+C
+      INTEGER, INTENT(IN   ) :: IROOT, LUNFT0, NCI, NSTATE, NMO, NDOUB,
+     *                          NMOACT, NGO, MAXCSF 
+      INTEGER,          INTENT(  OUT) :: LABEL1(4,MAXCSF)
+      DOUBLE PRECISION, INTENT(IN   ) :: EIGVEC(NCI,NSTATE),
+     *                                   CMOOLD(NGO,NMO)
+      DOUBLE PRECISION, INTENT(  OUT) :: GEN1(NDOUB+1:NDOUB+NMOACT,
+     *                                   NDOUB+1:NDOUB+NMOACT),
+     *                                   GEN1AO(NGO,NGO),WORKGE(MAXCSF),
+     *                                   AVECOE(NSTATE)
+C
+      INTEGER                :: I, J, K, L, M, 
+     *                          INIMO, LASMO, INIDOC, LASDOC, INIACT,
+     *                          LASACT, INWFT0, KCONT, NWORD, M1, M2,
+     *                          LP, LQ
+      DOUBLE PRECISION       :: S, THRZRO, VAL
+    
+
+C**** THRESHOLD ZERO ***************************************************
+      THRZRO=1.0D-15
+C**** NORMALIZE AVECOE *************************************************
+      S=0.0D+00
+      DO I=1,NSTATE
+        S=S+AVECOE(I)
+      END DO
+      IF(ABS(S).GT.THRZRO) THEN
+        S=1.0D+00/S
+        DO I=1,NSTATE
+          AVECOE(I)=AVECOE(I)*S
+        END DO
+      END IF
+C**** SET CONSTANTS ****************************************************
+      INIMO=1
+      LASMO=NMO
+      INIDOC=1
+      LASDOC=NDOUB
+      INIACT=NDOUB       +1
+      LASACT=NDOUB+NMOACT
+C***********************************************************************
+C****                  *************************************************
+C**** PREPARE MATRICES *************************************************
+C****                  *************************************************
+C**** CLEAR ARRAYS *****************************************************
+      DO J=INIACT,LASACT
+        DO I=INIACT,LASACT
+          GEN1(I,J)=0.0D+00
+        END DO
+      END DO
+      DO J=1,NGO
+        DO I=1,NGO
+          GEN1AO(I,J)=0.0D+00
+        END DO
+      END DO
+C**** GET AVERAGED ONE-PARTICLE DENSITY MATRIX *************************
+      CALL SEQREW(LUNFT0)
+      DO INWFT0=1,NWFT0
+C  100 CONTINUE
+        READ(LUNFT0) KCONT,NWORD
+        CALL MQGENR(LUNFT0,4*NWORD,NWORD,LABEL1,WORKGE)
+        DO M=1,NWORD
+          M1 =LABEL1(1,M)
+          M2 =LABEL1(2,M)
+          LP =LABEL1(3,M)
+          LQ =LABEL1(4,M)
+          VAL=WORKGE(M)
+          GEN1(LP,LQ)=GEN1(LP,LQ)
+     *      +EIGVEC(M1,IROOT)*VAL*EIGVEC(M2,IROOT)
+        END DO
+C      IF(KCONT.NE.0) GO TO 100
+      END DO
+      IF (GOPARR) CALL DDI_GSUMF(2537,GEN1,NMOACT*NMOACT)
+C**** GET ONE-PARTICLE DENSITY MATRIX ON AO BASE **************
+      DO K=INIDOC,LASDOC
+        DO J=1,NGO
+          S=CMOOLD(J,K)*2.0D+00
+          DO I=1,NGO
+            GEN1AO(I,J)=GEN1AO(I,J)+CMOOLD(I,K)*S
+          END DO
+        END DO
+      END DO
+      DO L=INIACT,LASACT
+        DO K=INIACT,LASACT
+          DO J=1,NGO
+            S=CMOOLD(J,L)*GEN1(K,L)
+            DO I=1,NGO
+              GEN1AO(I,J)=GEN1AO(I,J)+CMOOLD(I,K)*S
+            END DO
+          END DO
+        END DO
+      END DO
+
+      RETURN
+      END
+C*MODULE RSM_GMS_CI  *DECK RSM_GETEDAT_MCPT
+C>
+C>    @brief   compute energies of each state
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IROOT: the root whose density is computed
+C>             L1: the number of atomic orbitals
+C>             LUNFT0: the file number of coupling coefficient file
+C>             NDOUB: the number of doubly occupied orbitals
+C>             NMOACT: the number of active orbitals
+C>             NSTATE: the number of states
+C>             NCSF: total number of csfs
+C>             NMO: the number of molecular orbitals
+C>             MAXCSF: maximum length for one-particle coupling constant used
+C>                     in cas-ci calculation
+C>             PAO: one-particle density matrix on ao base
+C>             CMO: molecular orbitals
+C>             FAO: Solvated Fock matrix
+C>             FRISM: solvation free energy
+C>             EVAL: energy of each state
+C>
+
+      SUBROUTINE RSM_GETEDAT_MCPT(IROOT,L1,LUNFT0,NDOUB,NMOACT,NSTATE,
+     *                          NCSF,NMO,MAXCSF,PAO,CMO,FAO,FRISM,EVAL)
+C
+      use mx_limits, only: mxatm, mxrt
+      USE ABSMOD,    ONLY: NQMT0A
+C
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: IROOT,L1,LUNFT0,NDOUB,NMOACT, 
+     *                                   NSTATE,NCSF,NMO,MAXCSF
+      DOUBLE PRECISION, INTENT(IN   ) :: CMO(NGO,*), FRISM
+      DOUBLE PRECISION, INTENT(  OUT) :: PAO(*), FAO(*), EVAL(*)
+
+C**** COMMON FOR GAMESS ROUTINE ****************************************
+      DOUBLE PRECISION :: D
+      COMMON /FMCOM / D(1)
+
+      INTEGER :: IR, IW, IP, IJK, IPK, IDAF, NAV, IODA
+      COMMON /IOFILE/ IR,IW,IP,IJK,IPK,IDAF,NAV,IODA(950)
+
+      INTEGER :: NAT, IDUM1, IDUM2, NGO, NQMT, IDUM4, IDUM5, IDUM6, IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,IDUM1,IDUM2,NGO,NQMT,IDUM4,IDUM5,IDUM6,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      INTEGER :: IDAF50, NAV50, IODA50
+      COMMON /MQIOFI/ IDAF50,NAV50,IODA50(400)
+
+      INTEGER :: MQINIT, MQADDR, MQMNXT
+      DOUBLE PRECISION :: TRACEP
+C****
+      INTEGER                :: L2, LOADFM, IDUM, N001, N008, N013,
+     *                          N014, N015, N017, N018, N019, LASTP1,
+     *                          NEED1, NDSIZE, IST, I
+C
+      DOUBLE PRECISION, ALLOCATABLE :: E2(:), E2X(:), E8(:)
+C
+      L2 = L1*(L1+1)/2
+
+C**** ADDRESSING OF WORK AREA ******************************************
+      CALL VALFM(LOADFM)
+      IDUM=MQINIT(LOADFM+1)
+      N001=MQADDR(NCSF*NSTATE,'D')
+      N008=MQADDR(NMOACT*NMOACT,'D')
+      N013=MQADDR(4*MAXCSF,'I')
+      N014=MQADDR(MAXCSF,'D')
+      N015=MQADDR(MXRT,'D')
+      N017=MQADDR(L2,'D')
+      N018=MQADDR(NQMT0A+1,'D')     !  DMT
+      N019=MQADDR(NQMT0A+1,'D')     !  VPR
+C
+      LASTP1=MQMNXT()
+      NEED1=LASTP1-N001
+      CALL GETFM(NEED1)
+C**** READ CAS-CI EIGENVALUES & EIGENVECTORS *****************************************
+      NDSIZE=NSTATE
+      CALL MQDARE(IDAF50,IODA50,EVAL,NDSIZE,17,0)
+      NDSIZE=NCSF*NSTATE
+      CALL MQDARE(IDAF50,IODA50,D(N001),NDSIZE,18,0)
+
+      ALLOCATE(E2(NSTATE),E2X(NSTATE), E8(NSTATE))
+C
+C     GET VPR & solvated FOCK
+C
+      CALL RSM_DARE(D(N019),NQMT0A+1, 6,0)
+      CALL RSM_DARE(FAO    ,      L2,15,0)
+    
+      E2  = 0.0D+00
+      E2X = 0.0D+00
+      E8  = 0.0D+00
+      DO IST=1,NSTATE
+C
+C       GET DA
+C
+        CALL RSM_CALD_MCPT(IST,LUNFT0,NCSF,NSTATE,NMO,NDOUB,NMOACT,
+     *              NGO,MAXCSF,
+     *              D(N001),D(N015),CMO,PAO,D(N008),D(N013),D(N014))
+
+        CALL RSM_TRTR(L1,D(N017),PAO)
+C
+C       GET E8
+C
+        E8(IST) = TRACEP(D(N017),FAO,L1)
+C
+C       GET E2
+C
+        CALL RSM_CLDMT1(D(N017),D(N018))
+
+        DO I=1,NQMT0A
+          E2(IST) = E2(IST) + D(N018+I-1)*D(N019+I-1)
+        ENDDO
+C
+C     GET E2X
+C
+        IF(IST == IROOT) E2X(IST) = E2(IST)
+C
+C
+C
+      ENDDO
+
+      DO IST=1,NSTATE
+        EVAL(IST) = EVAL(IST) - E8(IST) + E2(IST) - E2X(IROOT) + FRISM
+      ENDDO
+C
+      NDSIZE=NSTATE
+      CALL MQDAWR(IDAF50,IODA50,EVAL,NDSIZE,17,0)
+C
+      CALL RETFM(NEED1)
+      DEALLOCATE(E2,E2X,E8)
+      RETURN
+C
+      END
+C*MODULE RSM_GMS_CI  *DECK RSM_TRTR
+C>
+C>    @brief   make square matrix into triangle
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NSIZE: the size of matrix
+C>             TRIG: triangle matrix
+C>             SQUA: square matrix 
+C>
+      SUBROUTINE RSM_TRTR(NSIZE,TRIG,SQUA)
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: NSIZE
+      DOUBLE PRECISION, INTENT(IN   ) :: SQUA(NSIZE,NSIZE)
+      DOUBLE PRECISION, INTENT(  OUT) :: TRIG(NSIZE*(NSIZE+1)/2)
+
+      INTEGER                :: I, J, N
+
+      N=0
+      DO I=1,NSIZE
+        DO J=1,I
+          N=N+1
+          TRIG(N)  = SQUA(J,I)
+        END DO
+      END DO
+      RETURN
+      END

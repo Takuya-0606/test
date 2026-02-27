@@ -1,0 +1,716 @@
+C*MODULE RSM_UNINP  *DECK RSM_UNCN
+C>
+C>    @brief   read parameters for uniform-grid RISM calculation
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IR: file number of input file
+C>             IW: file number of output file
+C>             IERR: 0: $RISMUN is found 1: $RISMUN is not found
+C>
+      SUBROUTINE RSM_UNCN(IR,IW,IERR)
+
+      USE RISM_MOD, ONLY : NU, NV, NTAB, ALPA, CLTYP, DELEX, XMN, THR, 
+     *                     JDIIS, NEXP, MXDIIS, MASWRK, GOPARR, MASTER,
+     *                     IREST, IROOT, EDIFMX, IRSM_DAMP, LJRULE, RMAX
+      USE RSMSED,   ONLY : NAT, IEQ, NPRINT, IZINC
+
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN   ) :: IR, IW
+      INTEGER, INTENT(  OUT) :: IERR
+C
+      INTEGER, PARAMETER     :: NNAM=16
+C
+      CHARACTER*1 NULL,CHR1
+      CHARACTER*256 SLVPTH
+C
+      DOUBLE PRECISION       :: QNAM(NNAM), RSMCN
+      INTEGER                :: KQNAM(NNAM)
+      DATA RSMCN/8HRISMUN  /
+      DATA QNAM /8HALPA    ,8HCLTYP   ,8HNEXP    ,8HDELEX   ,
+     *           8HXMN     ,8HTHR     ,8HJDIIS   ,
+     *           8HIREST   ,8HIEQ     ,8HMXDIIS  ,8HRMAX    ,8HNPRINT  ,
+     *           8HIROOT   ,8HEDIFMX  ,8HIZINC   ,8HLJRULE  /
+      DATA KQNAM/         3,         5,         1,         3,
+     *                    3,         3,         1,
+     *                    1,         1,         1,         3,         1,
+     *                    1,         3,         1,         1/
+C
+      DOUBLE PRECISION :: CL_HNC, CL_KH, CL_PSE2, CL_PSE3
+      DATA CL_HNC,CL_KH,CL_PSE2,CL_PSE3/8HHNC     ,8HKH      ,
+     *                                  8HPSE2    ,8HPSE3    /
+C
+      INTEGER :: IEOF, JRET, NGRID
+C
+C     ALPA   = screening facter in Ng scheme
+C     CLTYP  closure type = HNC (default)
+C                         = KH
+C                         = PSE2
+C                         = PSE3
+C     XMN    mixing ratio in RISM-SCF inner cycle (default
+C     THR    Threshold in RISM-SCF inner cycle
+C     NEXP, DELEX   see Ref ??
+C     JDIIS   = 0   Picard   
+C             = 1   DIIS     (default)
+C             = 2   DIIS+Picard
+C             = 3   BROYDEN
+C     IREST  = 0   Don't restart
+C            = 1         restart  (TD DENSITY IS READ)
+C            = 2         restart  (IEXP=1)
+C            = 3         restart  (QU ARE READ FROM IMPUT)
+C     IEQ    = 0   Distribution of solvent is in equilibrium with QM state (default)
+C            = 1   Distribution of solvent is fixed
+C            = 2   Distribution of solvent is fixed (TDDFT & reference is ES state)
+C     NPRINT = YX  (X: print RDF, Y: print DFCK)
+C
+C     RMAX   RDF is printed out up to RMAX (default: 15 angstrom)
+C
+C     IROOT  the state to which solvation structure is computed (0: GS)
+C
+C     EDIFMX : THRESHOLD OF EDIF (default: 0.02 eV)
+C
+C     IZINC = 1 : TDDFT DENSITY (C+T+Z) (IZINC = 1)
+C             0 : TDDFT DENSITY (C+T  ) (IZINC = 0)
+C
+C     LJRULE= 0 : radiusrule = arithmetic + epsrule = geometric
+C           = 1 : radiusrule = geometric  + epsrule = geometric
+C
+      ALPA   = 1.0D+00
+      CLTYP  = CL_HNC
+      XMN    = 0.40D+00
+      THR    = 1.0D-12
+      NEXP   = 6
+      DELEX  = 1.0D+00
+      JDIIS  = 3
+      IREST  = 0
+      IEQ    = 0
+      MXDIIS = 100
+      RMAX   = 15.0D+00
+      NPRINT = 1
+      IROOT  = -1
+      EDIFMX = 0.02D+00
+      IZINC  = 1
+      LJRULE = 0
+C
+      IRSM_DAMP = 0
+C
+      CALL SEQREW(IR)
+      JRET = 0
+      CALL NAMEIO(IR,JRET,RSMCN,NNAM,QNAM,KQNAM,
+     *                ALPA,CLTYP,
+     *                NEXP,DELEX,XMN,THR,JDIIS,
+     *                IREST,IEQ,
+     *                MXDIIS,RMAX,NPRINT,IROOT,EDIFMX,IZINC,
+     *                LJRULE,
+     *                                     0,0,0,   0,0,0,0,0,
+     *      0,0,0,0,0,    0,0,0,0,0,   0,0,0,0,0,   0,0,0,0,0,
+     *      0,0,0,0,0,    0,0,0,0,0,   0,0,0,0,0,   0,0,0,0,0)
+
+      IF(JRET.GT.2) THEN
+        WRITE (IW,*) ' NAMELIST $RISMCN SYNTAX ERROR FOUND. STOP.'
+        CALL ABRT
+      ENDIF
+
+      IF(JRET == 1) THEN
+        IERR = 1
+        RETURN
+      ENDIF
+C
+C     SET NU
+C     (UNITED ATOM IS NOT SUPPORTED.)
+C
+      NU = NAT
+C
+C       READ SOLVENT DATA AND CHECK NGRID
+C
+         
+      CALL SEQREW(IR)
+      CALL FNDGRP(IR,' $HVDATA',IEOF)
+
+      IF (IEOF.NE.0) THEN
+        WRITE(IW,*) 'There is no data of solvent. '
+        CALL ABRT
+      ENDIF
+
+      IF(MASWRK) THEN
+        READ(IR,'(8X,I15  )') NGRID
+        READ(IR,*) 
+        READ(IR,'(8X,I15  )') NV
+C
+C     ----- Print out the Information about RISM calculation
+C
+        WRITE(IW,'(/5X,21(1H-)/5X,"RISM-SCF-cSED CONTROL"/5X,21(1H-))')
+        WRITE(IW,'(5X,"CLOSURE            = ",A8)') CLTYP 
+        WRITE(IW,'(5X,"# OF SOLUTE  ATOMS = ",I8)') NU
+        WRITE(IW,'(5X,"# OF SOLVENT ATOMS = ",I8)') NV
+C       WRITE(IW,'(5X,"# OF GRID POINTS   = ",I8)') NGRID
+
+        WRITE(IW,'(/5X,17(1H-)/5X,"ITERATIVE OPTIONS"/5X,17(1H-))')
+
+        WRITE(IW,'(5X,4(A7,I9,3X))')
+     *  'JDIIS =',JDIIS,'NEXP  =',NEXP,'IREST =',IREST
+        WRITE(IW,'(5X,2(A7,F9.5,3X),(A7,E9.2,3X))')
+     *  'DELEX =',DELEX,'XMN   =',XMN,'THR   =',THR
+      ENDIF
+
+      IF (GOPARR) THEN
+        CALL RSM_BCAST(900,'I',NGRID ,1,MASTER)
+        CALL RSM_BCAST(901,'I',NV    ,1,MASTER)
+        CALL RSM_BCAST(902,'I',NPRINT,1,MASTER)
+      ENDIF
+C
+C     SET NTAB
+C
+      NTAB = NGRID
+C
+C     IN MCSCF CALCULATIONS, IROOT = 1 (GS)
+C 
+      IROOT = IROOT + 1
+C
+C     ----- Check closure
+C
+      IF(CLTYP.EQ.CL_KH  ) NEXP = 1
+      IF(CLTYP.EQ.CL_PSE2) NEXP = 2
+      IF(CLTYP.EQ.CL_PSE3) NEXP = 3
+C
+      RETURN
+      END
+
+C*MODULE RSM_UNINP  *DECK RSM_NEPUN
+C>
+C>    @brief   prepare the non-electrostatic potential with uniform-grid
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IR: file number of input file
+C>             IW: file number of output file
+C>
+      SUBROUTINE RSM_NEPUN(IR,IW)
+ 
+      USE RISMUN_MOD, ONLY : DELTR, DELTK
+      USE RISM_MOD,   ONLY : NU, NV, NTAB, BETA, ALPA, FREF, FPT, 
+     *                       GOPARR, MASWRK, MASTER, 
+     *                       RMX_SYMP, RKMX_SYMP, IDISP, IREP, LJRULE
+      USE RSMSED,     ONLY : ANAM
+
+      IMPLICIT NONE
+C
+      INTEGER, INTENT(IN   ) :: IR, IW
+C
+      DOUBLE PRECISION, ALLOCATABLE :: HWV(:,:,:),WV(:,:,:),HVV(:,:),
+     *                                 FNEP(:,:,:),SGV(:),EPV(:),QV(:),
+     *                                 DENV(:),VSITE(:),VCOR(:,:),
+     *                                 AMASS(:),SDIFF(:)
+      DOUBLE PRECISION, ALLOCATABLE :: RTAB(:),RKTAB(:),BRG(:,:,:),
+     *                                 HREF(:,:,:),FRLJ(:),EBRG(:,:,:), 
+     *                                 RLN(:),ELN(:,:,:),HLN(:,:,:)
+      DOUBLE PRECISION, ALLOCATABLE :: SGU2(:),EPU2(:),SGV2(:),EPV2(:)
+      INTEGER,ALLOCATABLE :: INDXV(:),NATV(:)
+C
+      INTEGER, PARAMETER  :: NNAM=3
+      DOUBLE PRECISION    :: UVDATA, QNAM(NNAM), SGU(2000), EPU(2000), 
+     *                       QU(2000)
+      INTEGER             :: KQNAM(NNAM)
+C
+      DOUBLE PRECISION, ALLOCATABLE :: VDUM(:),ESPV(:)
+C
+      DATA UVDATA/8HUDATA   /
+      DATA QNAM /8HSGU     ,8HEPU     ,8HQU      /
+      DATA KQNAM/     20003,     20003,     20003/
+C
+      DOUBLE PRECISION :: BOHR, ECNVJA, ECNVCA, BLTZMN, AVGNUM
+      DATA BOHR/0.52917724924D+00/
+      DATA ECNVJA,ECNVCA/3.808799D-07,1.593601D-03/
+      DATA BLTZMN,AVGNUM/1.3806504D+00,6.02214179D+00/
+C
+      INTEGER :: L1, L2, L3, I, J, K, IJ ,IK, IU, IV, JV, ICOMP, JCOMP, 
+     *           IGRID, MRAD, NRAD, IEOF, K4, K10, KK, KM, IRAD, ICMP, 
+     *           NCMP, NN, III, JNDXV, IERR, JRET
+      DOUBLE PRECISION :: PI, XIJ, YIJ, ZIJ, RIJ, RR, RKK, EIJ, SIJ, 
+     *                    SR, R2, VAL, DRHO, RHOM, R1, RK, TOT_DIS,
+     *                    TOT_REP, ALPTMP, TMASS, FACT, TEMP
+C
+      PI=ACOS(-1.0D+00)
+C
+      L1=NTAB*NU*NV
+      L2=NTAB*NV*NV
+      L3=NTAB*NV*(NV+1)/2
+C
+      ALLOCATE(HWV(NTAB,NV,NV),WV(NTAB,NV,NV),HVV(NTAB,NV*(NV+1)/2),
+     *         FNEP(NTAB,NU,NV),
+     *         SGV(NV),EPV(NV),QV(NV),DENV(NV),VSITE(NV),VCOR(3,NV),
+     *         AMASS(NV),SDIFF(NV),RTAB(NTAB),RKTAB(NTAB),
+     *         BRG(NTAB,NU,NV),HREF(NTAB,NU,NV),FRLJ(NU),
+     *         EBRG(NTAB,NV,NU))
+      ALLOCATE(SGU2(NU),EPU2(NU),SGV2(NV),EPV2(NV))
+      ALLOCATE(INDXV(NV),NATV(NV))
+C
+      DO I=1,NV
+        INDXV(I) = 0
+        NATV (I) = 0
+      ENDDO
+C
+C     READ SOLUTE DATA
+C
+      JRET=0
+      CALL NAMEIO(IR,JRET,UVDATA,NNAM,QNAM,KQNAM,
+     *                SGU,EPU,QU,
+     *                                                 0,
+     *     0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,
+     *     0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,
+     *     0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0,  0,0,0,0,0)
+
+      IF(JRET.NE.0 ) THEN
+        WRITE(*,*) 'ERROR AT RISMDAF'
+        CALL ABRT
+      ENDIF
+
+      CALL SEQREW(IR)
+      CALL FNDGRP(IR,' NGRID =',IERR)
+      IF (GOPARR) CALL RSM_BCAST(300,'I',IERR,1,MASTER)
+
+      IF (IERR.NE.0 .AND. MASWRK) THEN
+        WRITE(IW,*) 'THERE ARE SOME PROBLEMS IN SOLVENT DATA'
+        CALL ABRT
+      ENDIF
+
+      IF (MASWRK) THEN
+        READ(IR,'(8X,F15.7)') DELTR
+        READ(IR,*           )                            !  NV
+        READ(IR,'(8X,F15.7)') TEMP
+        READ(IR,*)
+        DO I=1,NV
+          READ(IR,1000)
+     *    VSITE(I),VCOR(1,I),VCOR(2,I),VCOR(3,I),SGV(I),EPV(I),QV(I),
+     *    INDXV(I),DENV(I),AMASS(I),SDIFF(I)
+        ENDDO
+        READ(IR,*)
+
+        KM=NTAB/4
+        DO I=1,NV
+          DO J=1,I
+            IJ=(I-1)*I/2+J
+            IK=0
+            DO IGRID=0,KM-1
+              READ(IR,'(1x,4(1PE20.12))')(HVV(IK+III,IJ),III=1,4)
+              IK=IK+4
+            ENDDO
+!           READ(IR,'(1x,1PE20.12)') HVV(NTAB,IJ) ! HVV(NGRID,IJ) MUST BE 0
+          ENDDO
+        ENDDO
+      ENDIF
+C
+C     GIVE DATA TO ALL PROCESSES
+C
+      IF (GOPARR) THEN
+        CALL RSM_BCAST(902,'F',DELTR,   1,MASTER)
+        CALL RSM_BCAST(903,'F',TEMP ,   1,MASTER)
+
+        CALL RSM_BCAST(904,'F',VSITE,  NV,MASTER)
+        CALL RSM_BCAST(905,'F',VCOR ,3*NV,MASTER)
+        CALL RSM_BCAST(906,'F',SGV  ,  NV,MASTER)
+        CALL RSM_BCAST(907,'F',EPV  ,  NV,MASTER)
+        CALL RSM_BCAST(908,'F',QV   ,  NV,MASTER)
+        CALL RSM_BCAST(909,'I',INDXV,  NV,MASTER)
+        CALL RSM_BCAST(910,'F',DENV ,  NV,MASTER)
+        CALL RSM_BCAST(911,'F',AMASS,  NV,MASTER)
+        CALL RSM_BCAST(911,'F',SDIFF,  NV,MASTER)
+        CALL RSM_BCAST(912,'F',HVV  ,  L3,MASTER)
+
+        CALL RSM_BCAST(913,'F',SGU  ,  NU,MASTER)
+        CALL RSM_BCAST(914,'F',EPU  ,  NU,MASTER)
+        CALL RSM_BCAST(915,'F',QU   ,  NU,MASTER)
+      ENDIF
+
+!       print *,'a2'
+C
+C     PREPARE GRID
+C
+      DELTK = PI/(FLOAT(NTAB)*DELTR)
+
+      DO IGRID=1,NTAB
+        R1 = DELTR*REAL(IGRID-1,8)
+        RK = DELTK*REAL(IGRID-1,8)
+
+        RTAB (IGRID) = R1
+        RKTAB(IGRID) = RK
+      ENDDO
+      RMX_SYMP  = DELTR*REAL(NTAB,8)
+      RKMX_SYMP = DELTK*REAL(NTAB,8)
+C
+C     Prepare BETA
+C  
+      BETA = 1.0D+00/(BLTZMN*AVGNUM*ECNVJA*TEMP)
+C
+C     PUNCH SOLUTE AND SOLVENT DATA
+C
+      NCMP = 0
+      JNDXV = 0
+      DO I=1,NV
+        IF(INDXV(I).NE.JNDXV) THEN
+          NCMP  = NCMP + 1
+          JNDXV = JNDXV + 1
+        ENDIF
+        NATV(NCMP) = NATV(NCMP) + 1
+      ENDDO
+
+      IF (MASWRK) THEN
+
+        WRITE(IW,'(/5X,12(1H-)/5X,"SOLVENT DATA"/5X,12(1H-))')
+
+        WRITE(IW,'(5X,"TEMPERATURE        = ",F10.3," K")') TEMP
+        WRITE(IW,'(5X,"# OF GRID POINTS   = ",I10       )') NTAB
+        WRITE(IW,'(5X,"GRID WIDTH         = ",F10.5," BOHR")') DELTR
+        WRITE(IW,'(1X)')
+
+        WRITE(IW,'(5X,A4,5X,A11,3X,A14,4X,A17)')
+     *     'TYPE','M.W.(G/MOL)','DENSITY(G/CM3)','# OF ATOMIC SITES'
+        NN = 0
+        DO ICMP=1,NCMP
+          TMASS = 0.0D+00
+          DO I=1,NATV(ICMP)
+            NN = NN + 1
+            TMASS = TMASS + AMASS(NN)
+          ENDDO
+
+          FACT = 10.0D+00*TMASS/AVGNUM
+
+          WRITE(IW,'(5X,I4,5X,F11.2,3X,F14.5,4X,I17)')
+     *               ICMP,TMASS,FACT*DENV(NN),NATV(ICMP)
+        ENDDO
+
+        WRITE(IW,'(/5X,18(1H-)/5X,"LJ TYPE AND COULOMB PARAMETERS"/5X,
+     *             18(1H-))')
+
+        WRITE(IW,'(/5X,"SOLUTE >>")')
+        WRITE(IW,'(/11X,"SITE       SIGMA(A)      EPSILON(KCAL/MOL)")')
+        DO I=1,NU 
+          WRITE(IW,'(11X,A8,F11.5,6X,F11.5)') ANAM(I),SGU(I),EPU(I)
+        ENDDO
+
+        WRITE(IW,'(/5X,"SOLVENT >>")')
+        WRITE(IW,'(/5X,
+     * "TYPE  SITE       SIGMA(A)      EPSILON(KCAL/MOL)  COULOMB(E)",
+     * "       DIFF (cm2/s)")')
+        DO I=1,NV
+         WRITE(IW,'(5X,I4,2X,A4,4X,F11.5,6X,F11.5,8X,F10.5,8X,1PE10.4)')
+     *               INDXV(I),VSITE(I),SGV(I),EPV(I),QV(I),SDIFF(I)
+        ENDDO
+
+        WRITE(IW,'(/5X)')
+      ENDIF
+C
+C     CONVERT PARAMETERS TO ATOMIC UNITS -----
+C
+C        EPU, EPV : kcal/mol
+C        SGU, SGV : angstrom
+C        DENV     : 1/angstrom**3
+C        SDIFF    : cm**2/s         => BOHR**2/ps
+C
+      DO I=1,NU
+         EPU(I) = EPU(I)*ECNVCA
+         SGU(I) = SGU(I)/BOHR
+      ENDDO
+
+      DO I=1,NV
+         EPV(I)    = EPV(I)*ECNVCA
+         SGV(I)    = SGV(I)/BOHR
+         DENV(I)   = DENV(I)*BOHR**3
+         VCOR(1,I) = VCOR(1,I)/BOHR
+         VCOR(2,I) = VCOR(2,I)/BOHR
+         VCOR(3,I) = VCOR(3,I)/BOHR
+
+         SDIFF(I)  = SDIFF(I)*1.0D+04/(BOHR**2)
+      ENDDO
+C
+C     WRITE SOME PARAMETERS INTO DAF
+C
+C      TYPE  RECORD  CONTENT  SIZE
+C      ----  ------  -------  ----
+C      D     1       SGU      NU
+C      D     2       QU       NU
+C      D     3       QV       NV
+C      D     4       DENV     NV
+C      D     5       VSITE    NV
+C      D     160     AMASS    NV
+
+      CALL RSM_DAWR(SGU  ,  NU,  1,0)
+      CALL RSM_DAWR(QU   ,  NU,  2,0)
+      CALL RSM_DAWR(DENV ,  NV,  4,0)
+      CALL RSM_DAWR(VSITE,  NV,  5,0)
+      CALL RSM_DAWR(RTAB ,NTAB,  8,0)
+      CALL RSM_DAWR(RKTAB,NTAB,  9,0)
+      CALL RSM_DAWR(AMASS,  NV,160,0)
+C
+C     Prepare HWV
+C
+      DO JV=1,NV
+        JCOMP = INDXV(JV)
+        DO IV=1,NV
+          ICOMP =INDXV(IV) 
+
+          IF(ICOMP.EQ.JCOMP) THEN
+            IF(IV.EQ.JV) THEN
+              DO IGRID=1,NTAB
+                WV(IGRID,IV,IV) = 1.0D+00
+              ENDDO
+            ELSE
+              XIJ = VCOR(1,IV)-VCOR(1,JV)
+              YIJ = VCOR(2,IV)-VCOR(2,JV)
+              ZIJ = VCOR(3,IV)-VCOR(3,JV)
+
+              RIJ = SQRT(XIJ*XIJ+YIJ*YIJ+ZIJ*ZIJ)
+              DO IGRID=2,NTAB
+                RKK=RKTAB(IGRID)
+                WV(IGRID,IV,JV) = SIN(RKK*RIJ)/(RKK*RIJ)
+              ENDDO
+              WV(1,IV,JV) =1.0D+00
+            ENDIF
+          ELSE
+            DO IGRID=1,NTAB
+              WV(IGRID,IV,JV) = 0.0D+00
+            ENDDO
+          ENDIF
+        ENDDO
+      ENDDO
+
+      DO J=1,NV
+        DO I=1,NV
+          IJ=(MAX(I,J)-1)*MAX(I,J)/2+MIN(I,J)
+          DO IGRID=1,NTAB
+            HWV(IGRID,I,J)=WV(IGRID,I,J)+DENV(I)*HVV(IGRID,IJ)
+          ENDDO
+        ENDDO
+      ENDDO
+C
+C     WRITE HWV INTO DAF
+C
+C      TYPE  RECORD  CONTENT  SIZE
+C      ----  ------  -------  ----
+C      D     11      HWV      L2
+C
+      CALL RSM_DAWR(HWV ,L2   , 11,0)
+C
+C     Prepare FNEP
+C
+      CALL RSM_CHKDISREP
+
+      FNEP = 0.0D+00
+      IF(IDISP == 0 .and. IREP == 0) THEN
+        DO IV=1,NV
+          DO IU=1,NU
+            IF(LJRULE == 0) THEN
+              SIJ=0.5D+00*(SGU(IU)+SGV(IV))
+            ELSE
+              SIJ=SQRT(SGU(IU)*SGV(IV))
+            ENDIF
+            EIJ=BETA*4.0D+00*SQRT(EPU(IU)*EPV(IV))
+
+            DO IGRID=2,NTAB
+              RR = RTAB(IGRID)
+              SR = (SIJ/RR)**6
+              FNEP(IGRID,IU,IV)=-EIJ*SR*(SR-1.0D+00)
+            ENDDO
+ 
+            FNEP(1,IU,IV)=FNEP(2,IU,IV)
+          ENDDO
+        ENDDO
+      ELSE
+        DO IV=1,NV
+          DO IU=1,NU
+            DO IGRID=2,NTAB
+              R2 = RTAB(IGRID)*RTAB(IGRID)
+              CALL RSM_CLDIS(IU,IV,R2,TOT_DIS)
+              CALL RSM_CLREP(IU,IV,R2,TOT_REP)
+
+              FNEP(IGRID,IU,IV)=-BETA*(TOT_REP+TOT_DIS)
+            ENDDO
+            FNEP(1,IU,IV)=FNEP(2,IU,IV)
+          ENDDO
+        ENDDO
+      ENDIF
+
+      CALL RSM_FINDISREP
+C
+C     WRITE HWV INTO DAF
+C
+C      TYPE  RECORD  CONTENT  SIZE
+C      ----  ------  -------  ----
+C      D     12      FNEP     L1
+C
+      CALL RSM_DAWR(QV   ,NV                  ,  3,0)
+      CALL RSM_DAWR(FNEP ,L1                  , 12,0)
+C
+C     PREPARE BRG AND HREF
+C
+      CALL SEQREW(IR)
+      CALL FNDGRP(IR,' $EBRG  ',IEOF)
+      IF(IEOF == 0) THEN
+
+        IF(MASWRK) THEN
+          READ(IR,'(9X,I15   )') MRAD
+          READ(IR,'(8X,F15.7 )') DRHO
+          READ(IR,'(8X,F22.14)') RHOM
+          READ(IR,*)  ! NU
+          READ(IR,*)  ! NV
+          READ(IR,'(9X,F15.7)') FREF
+          READ(IR,'(9X,F15.7)') FPT
+          READ(IR,'(9X,F15.7)') ALPTMP
+C
+C         ALLOCATE ARRAYS
+C
+          NRAD = 2**MRAD
+          ALLOCATE(RLN(NRAD),ELN(NRAD,NV,NU))
+
+          IF(ABS(ALPTMP-ALPA) > 1.0D-05) THEN
+            PRINT *,
+     *      'ALPHA IN $EBRG MUST BE THE SAME WITH THE ALPHA IN INPUT'
+            CALL ABRT
+          ENDIF
+
+          READ(IR,*) ! SIGMA(SOLUTE)
+
+          K10 = NU/10
+          KM  = NU - K10*10
+
+          KK = 0
+          DO K=1,K10
+            READ(IR,'(10F9.5)') (SGU2(KK+I),I=1,10)
+            KK = KK + 10
+          ENDDO
+          IF(KM /= 0) READ(IR,'(10F9.5)') (SGU2(KK+I),I=1,KM)
+
+          READ(IR,*) ! EPSILON(SOLUTE)
+
+          KK = 0
+          DO K=1,K10
+            READ(IR,'(10F9.5)') (EPU2(KK+I),I=1,10)
+            KK = KK + 10
+          ENDDO
+          IF(KM /= 0) READ(IR,'(10F9.5)') (EPU2(KK+I),I=1,KM)
+
+          READ(IR,*) ! SIGMA(SOLVENT)
+
+          K10 = NV/10
+          KM  = NV - K10*10
+
+          KK = 0
+          DO K=1,K10
+            READ(IR,'(10F9.5)') (SGV2(KK+I),I=1,10)
+            KK = KK + 10
+          ENDDO
+          IF(KM /= 0) READ(IR,'(10F9.5)') (SGV2(KK+I),I=1,KM)
+
+          READ(IR,*) ! EPSILON(SOLVENT)
+
+          KK = 0
+          DO K=1,K10
+            READ(IR,'(10F9.5)') (EPV2(KK+I),I=1,10)
+            KK = KK + 10
+          ENDDO
+          IF(KM /= 0) READ(IR,'(10F9.5)') (EPV2(KK+I),I=1,KM)
+
+          READ(IR,*) ! FA
+
+          K4 = NU/4
+          KM  = NU - K4*4
+
+          KK = 0
+          DO K=1,K4
+            READ(IR,'(4(1PE20.12))') (FRLJ(KK+I),I=1,4)
+            KK = KK + 4
+          ENDDO
+          IF(KM /= 0) READ(IR,'(4(1PE20.12))') (FRLJ(KK+I),I=1,KM)
+
+          READ(IR,*)
+C
+C         EBRG
+C
+          K4=NRAD/4
+          DO I=1,NU
+            DO J=1,NV
+              IK=0
+              DO IGRID=1,K4
+                READ(IR,'(1x,4(1PE20.12))') (ELN(IK+K,J,I),K=1,4)
+                IK=IK+4
+              ENDDO
+            ENDDO
+          ENDDO
+C
+C         GET BRG
+C
+          FREF = FREF * ECNVCA
+          FPT  = FPT  * ECNVCA
+
+          DO I=1,NU
+            EPU2(I) = EPU2(I)*ECNVCA
+            SGU2(I) = SGU2(I)/BOHR
+          ENDDO
+
+          DO I=1,NV
+            EPV2(I) = EPV2(I)*ECNVCA
+            SGV2(I) = SGV2(I)/BOHR
+          ENDDO
+C
+C         MAKE HREF
+C
+          DO IV=1,NV
+            DO IU=1,NU
+              IF(LJRULE == 0) THEN
+                SIJ=(SGU2(IU)+SGV2(IV))*0.5D+00
+              ELSE
+                SIJ=SQRT(SGU2(IU)*SGV2(IV))
+              ENDIF
+              EIJ=BETA*4.0D+00*SQRT(EPU2(IU)*EPV2(IV))
+
+              DO IRAD=1,NRAD
+                R1=RLN(IRAD)
+
+                SR=(SIJ/R1)**6
+
+                VAL=-EIJ*SR*(SR-1.0D+00)
+
+                HREF(IRAD,IU,IV) = EXP(VAL)*EBRG(IRAD,IV,IU)-1.0D+00
+              ENDDO
+            ENDDO
+          ENDDO
+C
+C         MAKE BRG
+C
+          DO IV=1,NV
+            DO IU=1,NU
+              DO IRAD=1,NTAB
+                VAL = EBRG(IRAD,IV,IU)
+                IF(VAL <= 0.0D+00) THEN
+                  BRG(IRAD,IU,IV) = -1.0D+80
+                ELSE
+                  BRG(IRAD,IU,IV) = LOG(VAL)
+                ENDIF
+              ENDDO
+            ENDDO
+          ENDDO
+        ENDIF
+      ELSE
+        BRG  = 0.0D+00
+        HREF = 0.0D+00
+        FRLJ = 0.0D+00
+
+        FREF = 0.0D+00
+        FPT  = 0.0D+00
+      ENDIF
+
+      CALL RSM_DAWR(BRG ,L1, 20,0)
+      CALL RSM_DAWR(HREF,L1, 21,0)
+      CALL RSM_DAWR(FRLJ,NU, 22,0)
+C
+      DEALLOCATE(HWV,WV,HVV,FNEP,SGV,EPV,QV,DENV,VSITE,VCOR,AMASS,SDIFF)
+      DEALLOCATE(INDXV,NATV)
+      DEALLOCATE(RTAB,RKTAB,BRG,HREF,FRLJ,EBRG)
+      DEALLOCATE(SGU2,EPU2,SGV2,EPV2)
+C
+ 1000 FORMAT(A4,1X,3(F11.6),3(F9.5),I3,1X,1P,E12.6,0P,F8.4,1X,1P,E10.4)
+C
+      RETURN
+      END
+

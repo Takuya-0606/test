@@ -1,0 +1,899 @@
+C*MODULE RSM_GMS_CPHF  *DECK RSM_CPHF3
+C>
+C>    @brief   modify WAX and AA in CPHF calculations and complete F^{SOLV}
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NOCC: the number of occupied orbitals
+C>             NVIR: the number of virtual orbitals
+C>             IA: matrix given in COMMON /IJPAIR/
+C>             WAX: matrix defined in CPRHF subroutine
+C>             AA: matrix defined in CPRHF subroutine
+C>
+      SUBROUTINE RSM_CPHF3(NOCC,NVIR,IA,WAX,AA)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, NUM, NAT, RSM_SCF_SETPAR,
+     *                     RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1, RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_SETINF2,
+     *                     RSM_SCF_CLOSEINF2
+      USE RISM_MOD, ONLY : RSM_SETPAR, RSM_SETVAR,RSM_PUTVAR
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RSM_BSMOD, ONLY : RSM_SCF_SETBS, RSM_SCF_CLOSEBS
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: NOCC, NVIR, IA(*)
+      DOUBLE PRECISION, INTENT(INOUT) :: WAX(NOCC,NVIR,*),
+     *                                   AA((NOCC*NOCC+NOCC)/2,*)
+C
+      INTEGER IR,IW,IP,IS,IPK,IDAF,NAV,IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: PAO(:), FD(:,:,:), FDMO(:), 
+     *                                   V(:), WRK(:)
+
+      INTEGER                :: L1, L2, L3, IXYZ, JXYZ, IAT, IVIR, IOCC,
+     *                          JOCC, IJ
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SCF_SETINF2
+      CALL RSM_SETABS
+      CALL RSM_SCF_SETBS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+      L1 = NUM
+      L2 = L1*(L1+1)/2
+      L3 = L1*L1
+C
+C     MEMORY ALLOCATION
+C
+      ALLOCATE(PAO(L2),FD(L2,3,NAT),FDMO(L2),V(L3),WRK(L1))
+
+      CALL DAREAD(IDAF,IODA,PAO,L2,16,0)
+      CALL RSM_CPHF_DRV3(PAO,FD)
+C
+C     AO -> MO
+C
+      CALL DAREAD(IDAF,IODA,V,L3,15,0)
+
+      JXYZ = 0
+      DO IAT=1,NAT
+        DO IXYZ=1,3
+          JXYZ = JXYZ + 1
+
+          CALL TFTRI(FDMO,FD(1,IXYZ,IAT),V,WRK,L1,L1,L1)
+
+          DO IVIR=1,NVIR
+            DO IOCC=1,NOCC
+              IJ=IA(IVIR+NOCC)+IOCC
+              WAX(IOCC,IVIR,JXYZ) = WAX(IOCC,IVIR,JXYZ)+4.0D+00*FDMO(IJ)
+            ENDDO
+          ENDDO
+
+         DO IOCC=1,NOCC
+           DO JOCC=1,IOCC
+             IJ=IA(IOCC)+JOCC
+             AA(IJ,JXYZ) = AA(IJ,JXYZ) + 4.0D+00*FDMO(IJ)
+           ENDDO
+         ENDDO
+        ENDDO
+      ENDDO
+C
+C
+C
+      DEALLOCATE(PAO,FD,FDMO,V,WRK)
+C
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEINF2
+      CALL RSM_CLOSEABS
+      CALL RSM_SCF_CLOSEBS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_CPHF  *DECK RSM_CPHF4
+C>
+C>    @brief   compute tQ * v * Q * (trial vector)
+C>             (see: the last term in eq 20 in JCP, 155, 204102 (2021))
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   ITYP: 0: CPFCK (MAKE WAX), 1: AOCPCL
+C>             PMN: Density-like matrix in atomic orbital (input)
+C>             FMN: tQ * v * Q
+C>             NXYZF: the number of normal modes
+C>             ERR: Error in CPHF iteration
+C>             ICONV: 0: not converged 1: converged (output)
+C>
+
+      SUBROUTINE RSM_CPHF4(ITYP,PMN,FMN,NXYZF,ERR,ICONV)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, NUM, RSM_SCF_SETPAR, RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1, RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_SETINF2,
+     *                     RSM_SCF_CLOSEINF2
+      USE RISM_MOD, ONLY : RSM_SETPAR, RSM_SETVAR,RSM_PUTVAR,maswrk
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: ITYP, NXYZF
+      INTEGER,          INTENT(  OUT) :: ICONV
+      DOUBLE PRECISION, INTENT(IN   ) :: PMN(*), ERR
+      DOUBLE PRECISION, INTENT(  OUT) :: FMN(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: PAO(:), RSMAO(:)
+C
+      INTEGER, SAVE          :: ICPHF_CYCLE
+      DOUBLE PRECISION, SAVE          :: BFCT
+C
+      INTEGER                :: L1, L2, L3, IXYZ, I, J, IJ, KL
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SCF_SETINF2
+      CALL RSM_SETABS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+      L1 = NUM
+      L2 = L1*(L1+1)/2
+      L3 = L1*L1
+C
+C     ALLOCATE MEMORY
+C
+      ALLOCATE(PAO(L2),RSMAO(L2))
+C
+      IF(ITYP == 0) THEN
+        ICPHF_CYCLE = 0
+        BFCT = 1.0D+00
+      ELSEIF(ITYP == 1) THEN
+        ICPHF_CYCLE = ICPHF_CYCLE + 1
+
+        IF(ICPHF_CYCLE <= 2) BFCT = 1.0D+00
+
+        IF(ICPHF_CYCLE >= 3 .and. ERR < 6.0D-04) THEN
+          BFCT = MIN(1.0D+00,BFCT+0.1D+00)
+        ENDIF
+
+        IF(BFCT < 0.999D+00) ICONV = 0
+      ENDIF
+C
+C
+C
+      DO IXYZ=1,NXYZF
+C
+C       GET PAO
+C
+        IJ = 0
+        KL = 0
+        DO I=1,L1
+          DO J=1,I
+            KL = KL + 1
+            PAO(KL) = PMN(IXYZ+IJ)
+
+            IJ = IJ + NXYZF
+          ENDDO
+        ENDDO
+
+        CALL RSM_CPHF_DRV1(1,PAO,RSMAO,BFCT)
+C
+C       SAVE TO FMN
+C
+        IJ = 0
+        KL = 0
+        DO I=1,L1
+          DO J=1,I
+            KL = KL + 1
+            FMN(IXYZ+IJ) = FMN(IXYZ+IJ) + RSMAO(KL)
+
+            IJ = IJ + NXYZF
+          ENDDO
+        ENDDO
+      ENDDO
+C
+C     CLOSE
+C
+      DEALLOCATE(PAO,RSMAO)
+
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEINF2
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_CPHF  *DECK RSM_CPHF5
+C>
+C>    @brief   add the solvent contribution to EG and FCM
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   NAT: the number of atoms
+C>             FCM_GMS: force constatnt matrix
+C>
+
+
+      SUBROUTINE RSM_CPHF5(NAT,FCM_GMS)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, NUM, RSM_SCF_SETPAR
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: NAT
+      DOUBLE PRECISION, INTENT(INOUT) :: FCM_GMS(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: FCM(:), EG_GMS(:), EG(:)
+
+      INTEGER                :: I
+C
+C     GAMESS
+C
+      INTEGER IR,IW,IP,IS,IPK,IDAF,NAV,IODA
+      COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
+C
+C     UPDATE FCM AND EG and SAVE INTO DAF4 and DAF3
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+C
+C     ALLOCATE MEMORY
+C
+      ALLOCATE(FCM(3*NAT*3*NAT), EG_GMS(3*NAT), EG(3*NAT))
+C
+C     GET EG_GMS
+C
+      CALL DAREAD(IDAF,IODA,EG_GMS,3*NAT,3,0)
+C
+C     GET EG AND FCM
+C
+      CALL RSM_DARE(EG ,3*NAT    ,62,0)
+      CALL RSM_DARE(FCM,9*NAT*NAT,64,0)
+C
+C     UPDATE
+C
+      DO I=1,3*NAT
+        EG_GMS(I) = EG_GMS(I) + EG(I)
+      ENDDO
+
+      DO I=1,9*NAT*NAT
+        FCM_GMS(I) = FCM_GMS(I) + FCM(I)
+      ENDDO
+C
+C     SAVE EG
+C
+      CALL DAWRIT(IDAF,IODA,EG_GMS,3*NAT,3,0)
+C
+C     CLOSE
+C
+      DEALLOCATE(FCM,EG_GMS,EG)
+
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+
+C*MODULE RSM_GMS_CPHF  *DECK RSM_CPHF7
+C>
+C>    @brief   read and write the response vector
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   MODE: 0: read, 1: write
+C>             NNXYZ: number of cartesian coordinate
+C>             NOCC: the number of occupied orbitals
+C>             NVIR: the number of virtual orbitals
+C>             NROT: = NOCC * NVIR
+C>             YA: response vector
+C>             VEC1: molecular orbital
+C>
+      SUBROUTINE RSM_CPHF7(MODE,NNXYZ,NOCC,NVIR,NROT,YA,VEC1)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF, IR, IW, IP
+      USE RSMSED,   ONLY : IRISM, NPRINT, NUM, NQMT, RSM_SCF_SETPAR,
+     *                     RSM_SCF_SETINF1, RSM_SCF_CLOSEINF1
+      USE RISM_MOD, ONLY : GOPARR, MASWRK, MASTER
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: MODE, NNXYZ, NOCC, NVIR, NROT
+      DOUBLE PRECISION, INTENT(INOUT) :: YA(*), VEC1(NUM,*)
+C
+      INTEGER                :: I, J, K, L, K4, KM, NN, IEOF, IERR
+C
+C     READ/WRITE YA
+C
+C     MODE = 0 : READ
+C          = 1 : WRITE
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF
+      CALL RSM_SCF_SETINF1
+
+      NN = NROT*NNXYZ
+      K4 = NN/4
+      KM = NN - 4*K4
+C
+C     READ
+C
+      IF(MODE == 0) THEN
+        CALL SEQREW(IR)
+        CALL FNDGRP(IR,' $YA    ',IEOF)
+
+        IF(IEOF == 0) THEN
+          IF(MASWRK) THEN
+            K = 0
+            DO I=1,K4
+              READ(IR,'(1x,4(1PE20.12))') (YA(K+J),J=1,4)
+              K = K + 4
+            ENDDO
+            IF(KM /= 0) READ(IR,'(1x,4(1PE20.12))') (YA(K+J),J=1,KM)
+          ENDIF
+
+          CALL SEQREW(IR)
+          CALL FNDGRP(IR,' $VEC_YA',IEOF)
+          IF(MASWRK) THEN
+C
+C           CHECK THE PHASE OF MO
+C
+            CALL RSM_CHKPHI(IR,IW,NUM,NQMT,NOCC,NVIR,NNXYZ,YA,VEC1)
+C
+!           IF (GOPARR) CALL RSM_BCAST(10002,'I',IEOF,1,MASTER)
+          ELSE
+!           IF (GOPARR) CALL RSM_BCAST(10002,'I',IEOF,1,MASTER)
+          ENDIF
+
+!         IF(IEOF /= 0) CALL ABRT
+
+          IF (GOPARR) CALL RSM_BCAST(10001,'F',YA,NN,MASTER)
+        ENDIF
+      ENDIF
+C
+C     WRITE
+C
+      IF(MODE == 1) THEN
+        IF(MASWRK .and. NPRINT/100 == 1) THEN
+          WRITE(IP,'(A4)') ' $YA'
+          K = 0
+          DO I=1,K4
+            WRITE(IP,'(1x,4(1PE20.12))') (YA(K+J),J=1,4)
+            K = K + 4
+          ENDDO
+          IF(KM /= 0) WRITE(IP,'(1x,4(1PE20.12))') (YA(K+J),J=1,KM)
+          WRITE(IP,'(A5)') ' $END'
+C
+C         SAVE VEC1
+C
+          K4 = NUM/4
+          KM = NUM - 4*K4
+          WRITE(IP,'(A8)') ' $VEC_YA'
+          DO L=1,NOCC+NVIR
+            K = 0
+            DO I=1,K4
+              WRITE(IP,'(1x,4(1PE20.12))') (VEC1(K+J,L),J=1,4)
+              K = K + 4
+            ENDDO
+            IF(KM /= 0) WRITE(IP,'(1x,4(1PE20.12))')(VEC1(K+J,L),J=1,KM)
+          ENDDO
+          WRITE(IP,'(A5)') ' $END'
+
+        ENDIF
+      ENDIF
+
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_GMS_CPHF  *DECK RSM_CHKPHI
+C>
+C>    @brief   check the phase of mo
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   IR: file number of input
+C>             IW: file number of output
+C>             NUM: the number of atomic orbitals
+C>             NQMT: the number of molecular orbital
+C>             NOCC: the number of occupied orbitals
+C>             NVIR: the number of virtual orbitals
+C>             NNXYZ: number of cartesian coordinate
+C>             YA: response vector
+C>             VEC1: molecular orbital
+C>
+      SUBROUTINE RSM_CHKPHI(IR,IW,NUM,NQMT,NOCC,NVIR,NNXYZ,YA,VEC1)
+
+      IMPLICIT NONE
+
+      INTEGER,          INTENT(IN   ) :: IR,IW,NUM,NQMT,NOCC,NVIR,NNXYZ
+      DOUBLE PRECISION, INTENT(IN   ) :: VEC1(NUM,*)
+      DOUBLE PRECISION, INTENT(INOUT) :: YA(NOCC,NVIR,NNXYZ)
+C
+      INTEGER                :: I, J, K, L, K4, KM
+      DOUBLE PRECISION                :: VAL1, VAL2, VAL3
+      DOUBLE PRECISION, ALLOCATABLE   :: SGN(:),VEC2(:,:)
+C
+      ALLOCATE(SGN(NUM),VEC2(NUM,NUM))
+C
+C     READ VEC2 FROM IR
+C
+      K4 = NUM/4
+      KM = NUM - 4*K4
+      DO L=1,NOCC+NVIR
+        K = 0
+        DO I=1,K4
+          READ(IR,'(1x,4(1PE20.12))') (VEC2(K+J,L),J=1,4)
+          K = K + 4
+        ENDDO
+        IF(KM /= 0) READ(IR,'(1x,4(1PE20.12))') (VEC2(K+J,L),J=1,KM)
+      ENDDO
+C
+C     CHECK SIGN
+C
+      DO I=1,NOCC+NVIR
+C
+C       NORM
+C
+        VAL1 = 0.0D+00
+        DO J=1,NUM
+          VAL1 = VAL1 + VEC1(J,I)*VEC1(J,I)
+        ENDDO
+        VAL1 = SQRT(VAL1)
+
+        VAL2 = 0.0D+00
+        DO J=1,NUM
+          VAL2 = VAL2 + VEC2(J,I)*VEC2(J,I)
+        ENDDO
+        VAL2 = SQRT(VAL2)
+C
+C
+C
+        VAL3 = 0.0D+00
+        DO J=1,NUM
+          VAL3 = VAL3 + VEC1(J,I)*VEC2(J,I)
+        ENDDO
+        VAL3 = VAL3/(VAL1*VAL2)
+       
+        IF(VAL3 > 0.0D+00) THEN
+          SGN(I) = 1.0D+00
+        ELSE
+          SGN(I) =-1.0D+00
+        ENDIF 
+      ENDDO
+C
+C
+C
+      DO K=1,NNXYZ
+        DO J=1,NVIR
+          DO I=1,NOCC
+            YA(I,J,K) = YA(I,J,K)*SGN(I)*SGN(NOCC+J)
+          ENDDO
+        ENDDO
+      ENDDO
+C
+      DEALLOCATE(SGN,VEC2)
+C
+      END SUBROUTINE
+C*MODULE RSM_GMS_CPHF  *DECK RSM_MKDSMTCP
+C>
+C>    @brief   compute the derivative ond the hessian of overlap matrix 
+C>             in HESS calculation
+C>             (ref: J. Chem. Phys. 155, 204102 (2021).)
+C>
+C>    @author  Daisuke Yokogawa
+C>
+C>    @param   VPR: electrostatic potential induced by solvent molecules
+C>             PA: density matrix
+C>             FD: derivative of solvated Fock matrix
+C>             GD2: derivative of Delta d matrix (eq 15 in the reference)
+C>             EG: gradient
+C>             EH: Hessian
+C>
+
+
+      SUBROUTINE RSM_MKDSMTCP(VQ,PA,FD,GD2,EG,EH)
+C
+      use mx_limits, only    : MXSH, MXGTOT, MXGSH, MXATM
+C
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(IN   ) :: VQ, PA(*)
+      DOUBLE PRECISION, INTENT(INOUT) :: FD(*),GD2(3,*),EG(3,*),EH(9,*)
+
+      DOUBLE PRECISION                ::DIJ10(78),DIJ11(169),DIJ20(132),
+     *                                  SIJ10(78),SIJ11(169),SIJ20(132),
+     *                                  XIN(169),YIN(169),ZIN(169), 
+     *                                  DS(9),FOE(36,9)
+
+C
+      DOUBLE PRECISION, ALLOCATABLE :: WX(:),WY(:),WZ(:)
+C
+      INTEGER :: NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,IAN
+      DOUBLE PRECISION :: ZAN, C
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+
+      INTEGER :: IR,IW,IP,IJK,IPK,IDAF,NAV,IODA
+      COMMON /IOFILE/ IR,IW,IP,IJK,IPK,IDAF,NAV,IODA(950)
+
+      INTEGER :: NSHELL,KSTART,KATOM,KTYPE,KNG,KLOC,KMIN,KMAX
+      DOUBLE PRECISION :: EX, CS, CP, CD, CF, CG, CH, CI
+      COMMON /NSHEL / EX(MXGTOT),CS(MXGTOT),CP(MXGTOT),CD(MXGTOT),
+     *                CF(MXGTOT),CG(MXGTOT),CH(MXGTOT),CI(MXGTOT),
+     *                KSTART(MXSH),KATOM(MXSH),KTYPE(MXSH),KNG(MXSH),
+     *                KLOC(MXSH),KMIN(MXSH),KMAX(MXSH),NSHELL
+
+      INTEGER :: NPRINT, ITOL, ICUT, NORMF, NORMP, NOPK
+      COMMON /OUTPUT/ NPRINT,ITOL,ICUT,NORMF,NORMP,NOPK
+
+      INTEGER :: LIT,LJT,LKT,LLT,LOCI,LOCJ,LOCK,LOCL,MINI,MINJ,MINK,
+     *           MINL,MAXI,MAXJ,MAXK,MAXL,NIJ,IJD,KLD,IJ,KL
+      COMMON /SHLOED/ LIT,LJT,LKT,LLT,LOCI,LOCJ,LOCK,LOCL,
+     *                MINI,MINJ,MINK,MINL,MAXI,MAXJ,MAXK,MAXL,
+     *                NIJ,IJD,KLD,IJ,KL
+
+      INTEGER :: NI, NJ
+      DOUBLE PRECISION :: XINT,YINT,ZINT,T,X0,Y0,Z0,XI,YI,ZI,XJ,YJ,ZJ,
+     *                    CX,CY,CZ
+      COMMON /XYZDER/ XINT,YINT,ZINT,T,X0,Y0,Z0,XI,YI,ZI,XJ,YJ,ZJ,
+     *                NI,NJ,CX,CY,CZ
+
+      INTEGER :: NGA,NGB,NGC,NGD
+      DOUBLE PRECISION :: GA, CSA, CPA, CDA, XA, YA, ZA, 
+     *                    GB, CSB, CPB, CDB, XB, YB, ZB,
+     *                    GC, CSC, CPC, CDC, XC, YC, ZC,
+     *                    GD, CSD, CPD, CDD, XD, YD, ZD,
+     *                    RR, RRC
+      COMMON /INFOED/ GA(MXGSH),CSA(MXGSH),CPA(MXGSH),CDA(MXGSH),
+     1                GB(MXGSH),CSB(MXGSH),CPB(MXGSH),CDB(MXGSH),
+     2                GC(MXGSH),CSC(MXGSH),CPC(MXGSH),CDC(MXGSH),
+     3                GD(MXGSH),CSD(MXGSH),CPD(MXGSH),CDD(MXGSH),
+     4                XA,YA,ZA,XB,YB,ZB,RR,XC,YC,ZC,XD,YD,ZD,RRC,
+     5                NGA,NGB,NGC,NGD
+
+      INTEGER :: NADIJ1, NADIJ2, NADIJ3
+      COMMON /DIJOED/ NADIJ1( 78),NADIJ2(169),NADIJ3(132)
+
+      INTEGER :: NPIJX1, NPIJX2, NPIJX3
+      COMMON /IJXOED/ NPIJX1( 78),NPIJX2(169),NPIJX3(132)
+
+      INTEGER :: NPIJY1, NPIJY2, NPIJY3
+      COMMON /IJYOED/ NPIJY1( 78),NPIJY2(169),NPIJY3(132)
+
+      INTEGER :: NPIJZ1, NPIJZ2, NPIJZ3
+      COMMON /IJZOED/ NPIJZ1( 78),NPIJZ2(169),NPIJZ3(132)
+C
+      INTEGER :: NFDIJ1,NFDIJ2,NFDIJ3,NW
+      DATA NFDIJ1,NFDIJ2,NFDIJ3,NW /  78, 169, 132, 169/
+C
+      INTEGER :: L2, NX, NY, NZ, IFDX, IFDY, IFDZ, N, NN, 
+     *           I, IG, II, IAT, I1, I2, IN, IIAT, IIG, 
+     *           J, JG, JJ, JAT, J1, J2, JN, IJAT, JJG,
+     *           NIJ10, NIJ11, NIJ20
+      DOUBLE PRECISION :: AI, AJ, AX, AY, AZ, AXI, AYI, AZI, AA, AA1,
+     *                    ARRI, VALX, VALY, VALZ, FAC, DUM
+C
+      L2 = NUM*(NUM+1)/2
+      ALLOCATE(WX(NUM*NUM),WY(NUM*NUM),WZ(NUM*NUM))
+C
+      CALL STVJDD
+C
+C     ----- I SHELL -----
+C
+      DO II = 1,NSHELL
+        IAT = KATOM(II)
+        XI = C(1,IAT)
+        YI = C(2,IAT)
+        ZI = C(3,IAT)
+        XA = XI
+        YA = YI
+        ZA = ZI
+        I1 = KSTART(II)
+        I2 = I1+KNG(II)-1
+        LIT = KTYPE(II) + 2
+        MINI = KMIN(II)
+        MAXI = KMAX(II)
+        LOCI = KLOC(II)-MINI
+        NGA = 0
+        DO I = I1,I2
+          NGA = NGA + 1
+          GA( NGA) = EX(I)
+          CSA(NGA) = CS(I)
+          CPA(NGA) = CP(I)
+          CDA(NGA) = CD(I)
+        ENDDO
+C
+C     ----- J SHELL -----
+C
+        DO JJ = 1,NSHELL
+          JAT = KATOM(JJ)
+          XJ = C(1,JAT)
+          YJ = C(2,JAT)
+          ZJ = C(3,JAT)
+          XB = XJ
+          YB = YJ
+          ZB = ZJ
+          J1 = KSTART(JJ)
+          J2 = J1+KNG(JJ)-1
+          LJT = KTYPE(JJ)
+          LJT = LJT + 1
+          MINJ = KMIN(JJ)
+          MAXJ = KMAX(JJ)
+          LOCJ = KLOC(JJ)-MINJ
+          NGB = 0
+          DO J =J1,J2
+            NGB = NGB + 1
+            GB( NGB) = EX(J)
+            CSB(NGB) = CS(J)
+            CPB(NGB) = CP(J)
+            CDB(NGB) = CD(J)
+          ENDDO
+          RR = (XI-XJ)**2+(YI-YJ)**2+(ZI-ZJ)**2
+C
+C     ----- PREPARE INDICES FOR PAIRS OF (I,J) FUNCTIONS -----
+C
+          CALL STVIDX(0)
+C
+          CALL VCLR(SIJ10,1,NFDIJ1)
+          CALL VCLR(SIJ11,1,NFDIJ2)
+          CALL VCLR(SIJ20,1,NFDIJ3)
+C
+C     ----- I PRIMITIVE -----
+C
+          IIG = 0
+          DO IG = I1,I2
+            IIG = IIG + 1
+            AI = EX(IG)
+            ARRI = AI*RR
+            AXI = AI*XI
+            AYI = AI*YI
+            AZI = AI*ZI
+            DUM = AI+AI
+C
+C     ----- J PRIMITIVE -----
+C
+            JJG = 0
+            DO JG = J1,J2
+              JJG = JJG + 1
+              AJ = EX(JG)
+              AA = AI+AJ
+              AA1 = 1.0D+00/AA
+              AX = (AXI+AJ*XJ)*AA1
+              AY = (AYI+AJ*YJ)*AA1
+              AZ = (AZI+AJ*ZJ)*AA1
+C
+C     ----- DENSITY FACTOR -----
+C
+              CALL STVDIJ(0,IIG,JJG,NIJ10,NIJ11,NIJ20,
+     *                    DIJ10,DIJ11,DIJ20,XIN,YIN,ZIN,
+     *                    NFDIJ1,NFDIJ2,NFDIJ3)
+C
+C     ----- OVERLAP -----
+C
+              T =  SQRT(AA1)
+              X0 = AX
+              Y0 = AY
+              Z0 = AZ
+              IN = -4
+              DO I = 1,LIT
+                IN = IN+4
+                NI = I
+                DO J = 1,LJT
+                  JN = IN+J
+                  NJ = J
+                  CALL DERXYZ(0)
+                  XIN(JN) = XINT*T
+                  YIN(JN) = YINT*T
+                  ZIN(JN) = ZINT*T
+                ENDDO
+              ENDDO
+
+              DO I = 1,NIJ10
+                N  = NADIJ1(I)
+                NX = NPIJX1(I)
+                NY = NPIJY1(I)
+                NZ = NPIJZ1(I)
+                SIJ10(N) = SIJ10(N) + DIJ10(I)*XIN(NX)*YIN(NY)*ZIN(NZ)
+              ENDDO
+
+              DO I = 1,NIJ11
+                N  = NADIJ2(I)
+                NX = NPIJX2(I)
+                NY = NPIJY2(I)
+                NZ = NPIJZ2(I)
+                SIJ11(N) = SIJ11(N) + DIJ11(I)*XIN(NX)*YIN(NY)*ZIN(NZ)
+              ENDDO
+
+              DO I = 1,NIJ20
+                N  = NADIJ3(I)
+                NX = NPIJX3(I)
+                NY = NPIJY3(I)
+                NZ = NPIJZ3(I)
+                SIJ20(N) = SIJ20(N) + DIJ20(I)*XIN(NX)*YIN(NY)*ZIN(NZ)
+              ENDDO
+C
+C     ----- END OF PRIMITIVE LOOPS -----
+C
+            ENDDO
+          ENDDO
+C
+C     ----- FORM INTEGRALS OVER DERIVATIVES -----
+C
+C         WX, WY, WZ : gradient
+C         DS         : hessian
+C
+C
+          CALL SDFSIJ(SIJ10,SIJ20,DS,NFDIJ1,NFDIJ3,NUM,PA,WX,WY,WZ,FOE)
+C
+C         (D2 MU/D R2| NU) + (MU|D2 NU/D R2)
+C
+          IIAT = IAT*(IAT-1)/2 + IAT
+          DO I = 1,9
+            EH(I,IIAT) = EH(I,IIAT) - (DS(I)+DS(I))*VQ
+          ENDDO
+
+!         print *,II,JJ,ds(1)
+
+          IF(IAT >= JAT) THEN
+            CALL SDFIFJ(SIJ11,DS,NFDIJ2,PA,NW,XIN,YIN,ZIN,FOE)
+            IJAT = IAT * ( IAT - 1) / 2 + JAT
+            DO I = 1,9
+              EH(I,IJAT) = EH(I,IJAT) -(DS(I) + DS(I))*VQ
+            ENDDO
+          ENDIF
+C
+C     ----- END OF SHELL LOOPS -----
+C
+        ENDDO
+      ENDDO
+C
+C
+C
+      DO II = 1,NSHELL
+        IAT = KATOM(II)
+        IFDX  = 3*L2*(IAT-1)
+        IFDY  = IFDX + L2
+        IFDZ  = IFDY + L2
+        MINI = KMIN(II)
+        MAXI = KMAX(II)
+        LOCI = KLOC(II) - MINI
+
+        DO JJ=1,NSHELL
+          JAT = KATOM(JJ)
+          MINJ = KMIN(JJ)
+          MAXJ = KMAX(JJ)
+          LOCJ = KLOC(JJ) - MINJ
+
+          VALX = 0.0D+00
+          VALY = 0.0D+00
+          VALZ = 0.0D+00
+          DO I=MINI,MAXI
+            IN = LOCI + I
+            DO J=MINJ,MAXJ
+              JN = LOCJ + J
+
+              IF(IN >= JN) THEN
+                IJ = IN*(IN-1)/2 + JN
+              ELSE
+                IJ = JN*(JN-1)/2 + IN
+              ENDIF
+
+              NN = NUM*(JN-1)+IN
+              VALX = VALX + PA(IJ)*WX(NN)
+              VALY = VALY + PA(IJ)*WY(NN)
+              VALZ = VALZ + PA(IJ)*WZ(NN)
+            ENDDO
+          ENDDO
+          EG(1,IAT) = EG(1,IAT) - (VALX + VALX)*VQ
+          EG(2,IAT) = EG(2,IAT) - (VALY + VALY)*VQ
+          EG(3,IAT) = EG(3,IAT) - (VALZ + VALZ)*VQ
+
+          GD2(1,IAT) = GD2(1,IAT) - (VALX + VALX)
+          GD2(2,IAT) = GD2(2,IAT) - (VALY + VALY)
+          GD2(3,IAT) = GD2(3,IAT) - (VALZ + VALZ)
+C
+C
+C
+          DO I=MINI,MAXI
+            IN = LOCI + I
+            DO J=MINJ,MAXJ
+              JN = LOCJ + J
+
+              IF(IN >= JN) THEN
+                IJ = IN*(IN-1)/2 + JN
+              ELSE
+                IJ = JN*(JN-1)/2 + IN
+              ENDIF
+
+              NN = NUM*(JN-1)+IN
+
+              FAC = VQ
+              IF(IN == JN) FAC = VQ+VQ
+
+              FD(IFDX+IJ) = FD(IFDX+IJ) - FAC * WX(NN)
+              FD(IFDY+IJ) = FD(IFDY+IJ) - FAC * WY(NN)
+              FD(IFDZ+IJ) = FD(IFDZ+IJ) - FAC * WZ(NN)
+            ENDDO
+          ENDDO
+        ENDDO
+      ENDDO
+C
+!     print *,'dsmt'
+!     do i=1,nat
+!       print *,(eg(j,i),j=1,3)
+!     enddo
+!     print *,''
+!     do i=1,nat*(nat+1)/2
+!       nn = 0
+!       do k=1,3
+!         print *,(eh(nn+j,i),j=1,3)
+!         nn = nn + 3
+!       enddo
+!       print *,'----'
+!     enddo
+C
+      DEALLOCATE(WX,WY,WZ)
+C
+      RETURN
+C
+      END
+
+

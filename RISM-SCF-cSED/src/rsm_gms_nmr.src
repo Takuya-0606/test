@@ -1,0 +1,273 @@
+C*MODULE RSM_NMR  *DECK RSM_NMR_DRV
+C>
+C>    @brief   prepare dY/dB
+C>             (see: eq 34 in JCP, 152, 194102 (2020)) 
+C>
+C>    @author  Kosuke Imamura
+C>
+      SUBROUTINE RSM_NMR_DRV
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, NUM, RSM_SCF_SETPAR, RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1, RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_SETINF2,
+     *                     RSM_SCF_CLOSEINF2
+      USE RISM_MOD, ONLY : RSM_SETPAR, RSM_SETVAR,RSM_PUTVAR
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+      USE RSM_BSMOD,ONLY : RSM_SCF_SETBS, RSM_SCF_CLOSEBS
+
+      IMPLICIT NONE
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF      
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SCF_SETINF2
+      CALL RSM_SETABS
+      CALL RSM_SCF_SETBS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+      CALL RSM_MKDYMT3
+C
+C     CLOSE
+C
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEINF2
+      CALL RSM_CLOSEABS
+      CALL RSM_SCF_CLOSEBS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_NMR  *DECK RSM_NMR_1
+C>
+C>    @brief   fetch dS/dB
+C>
+C>    @author  Kosuke Imamura
+C>
+C>    @param   NCART: Index of Cartesian coodinate axes
+C>                   1 -> X, 2 -> Y, 3 -> Z (input)
+C>             S10: dS/dB matrix (input)
+C>             L2S: Size of S10 (upper-triangular without diagonal) (input)
+C>
+      SUBROUTINE RSM_NMR_1(NCART,S10,L2S)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, NUM, RSM_SCF_SETPAR, RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1, RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_SETINF2,
+     *                     RSM_SCF_CLOSEINF2, QMT, VPR
+      USE RISM_MOD, ONLY : RSM_SETPAR, RSM_SETVAR,RSM_PUTVAR,
+     *                     MASWRK   
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+C
+      INTEGER,          INTENT(IN   ) :: NCART, L2S
+      DOUBLE PRECISION, INTENT(IN   ) :: S10(*)
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF      
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SCF_SETINF2
+      CALL RSM_SETABS
+      CALL RSM_SETPAR
+      CALL RSM_SETVAR
+      CALL RSM_SCF_SETVAR
+C
+      CALL RSM_CALCDER(NCART,S10,L2S)
+C
+C     CLOSE
+C
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEINF2
+      CALL RSM_CLOSEABS
+      CALL RSM_PUTVAR
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
+C*MODULE RSM_NMR  *DECK RSM_CALCDER
+C>
+C>    @brief  costruct solvation term in dF/dB
+C>            (see: eq 28 in JCP, 152, 194102 (2020)) 
+C>
+C>    @author Kosuke Imamura
+C>
+C>    @param  NCART: Index of Cartesian coodinate axes
+C>                   1 -> X, 2 -> Y, 3 -> Z (input)
+C>            S10: dS/dB matrix (input)
+C>            L2S: Size of S10 (upper-triangular without diagonal) (input)
+C>
+      SUBROUTINE RSM_CALCDER(NCART,S10,L2S)
+
+      USE ABSMOD,   ONLY : NQMT0A
+      USE RSMSED,   ONLY : QMT, VPR, NUM
+      USE RISM_MOD, ONLY : MASWRK
+
+      IMPLICIT NONE 
+C
+      INTEGER,          INTENT(IN   ) :: NCART, L2S
+      DOUBLE PRECISION, INTENT(IN   ) :: S10(*)
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: DFDB(:), DER(:,:,:), WK(:)
+
+      INTEGER                :: L1, NSHELP, I, K
+C
+      L1 = NQMT0A*3*L2S
+      NSHELP = NQMT0A + 1
+C
+C     ALLOCATE MEMORY
+C
+      ALLOCATE(DFDB(L2S),DER(NQMT0A,3,L2S),WK(NSHELP))
+C
+C
+      DFDB = 0.0D+00
+      CALL RSM_VXINV(WK,QMT,VPR)
+C
+      DO I = 1, L2S
+         DFDB(I) = -WK(NSHELP)*S10(I)
+      ENDDO
+C
+      CALL SPRTRIL(S10,NUM)
+      CALL RSM_DARE(DER,L1,61,0)
+C
+      DO I = 1, L2S
+         DO K = 1, NQMT0A
+           DFDB(I) = DFDB(I) + 2.0D+00*WK(K)*DER(K,NCART,I)
+         ENDDO
+      ENDDO
+C
+C     SAVE DERIVATIVE OF FOCK
+C
+      CALL RSM_DAWR(DFDB,L2S,62,0)
+C
+      DEALLOCATE(DFDB,DER,WK)
+C
+      RETURN
+      END
+C*MODULE RSM_NMR  *DECK RSM_VXINV
+C>
+C>    @brief   compute V * X^-1
+C>
+C>    @author  Kosuke Imamura
+C>
+C>    @param   WK: V * Q (output)
+C>             QMT: the inverse matrix of X matrix (input)
+C>             VPR: V matrix (input)
+C>
+      SUBROUTINE RSM_VXINV(WK,QMT,VPR)
+
+      USE ABSMOD, ONLY : NQMT0A
+
+      IMPLICIT NONE
+C
+      DOUBLE PRECISION, INTENT(IN   ) :: QMT(NQMT0A+1,*), VPR(*)
+      DOUBLE PRECISION, INTENT(  OUT) :: WK(*)
+C
+      DOUBLE PRECISION                :: SUM
+      INTEGER                :: I, J
+C
+      DO I=1,NQMT0A+1
+        SUM = 0.0D+00
+        DO J=1,NQMT0A
+          SUM = SUM + VPR(J)*QMT(J,I)
+        ENDDO
+        WK(I) = SUM
+      ENDDO
+C
+      RETURN
+      END
+C*MODULE RMS_NMR  *DECK RSM_NMR_2
+C>
+C>    @brief   fetch dF/dB in the gas-phase and add solvation term
+C>
+C>    @author  Kosuke Imamura
+C>
+C>    @param   F10: dF/dB matrix (input,output)
+C>             L2S: Size of F10 (upper-triangular without diagonal) (input)
+C>
+      SUBROUTINE RSM_NMR_2(F10,L2S)
+
+      USE RISM_IO,  ONLY : RSM_SETIO, IRSSQF
+      USE RSMSED,   ONLY : IRISM, NUM, RSM_SCF_SETPAR, RSM_SCF_SETINF1,
+     *                     RSM_SCF_CLOSEINF1, RSM_SCF_SETVAR,
+     *                     RSM_SCF_PUTVAR, RSM_SCF_SETINF2,
+     *                     RSM_SCF_CLOSEINF2
+      USE RISM_MOD, ONLY : RSM_SETPAR, MASWRK
+      USE ABSMOD,   ONLY : RSM_SETABS, RSM_CLOSEABS
+
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(INOUT) :: F10(*)
+      INTEGER,          INTENT(IN   ) :: L2S
+C
+      DOUBLE PRECISION, ALLOCATABLE   :: WRK(:)
+
+      INTEGER                 :: I
+C
+C     SET MODULE DATA
+C
+      CALL RSM_PARIN
+      CALL RSM_OPDA(0)
+      CALL RSM_SQOPN(IRSSQF,'RISM02','UNKNOWN','UNFORMATTED')
+      CALL RSM_SETIO
+      CALL RSM_SCF_SETPAR
+      IF(IRISM /= 0) THEN
+        CALL RSM_CLDA
+        CALL RSM_SQCLS(IRSSQF)
+        RETURN
+      ENDIF      
+      CALL RSM_SCF_SETINF1
+      CALL RSM_SCF_SETINF2
+      CALL RSM_SETABS
+      CALL RSM_SETPAR
+      CALL RSM_SCF_SETVAR
+C
+C     ALLOCATE MEMORY
+C
+      ALLOCATE(WRK(L2S))
+C
+      CALL RSM_DARE(WRK,L2S,62,0)
+C
+      DO I = 1, L2S
+         F10(I) = F10(I) + WRK(I)
+      ENDDO
+C
+C     CLOSE
+C
+      DEALLOCATE(WRK)
+      CALL RSM_SCF_CLOSEINF1
+      CALL RSM_SCF_CLOSEINF2
+      CALL RSM_CLOSEABS
+      CALL RSM_SCF_PUTVAR
+      CALL RSM_CLDA
+      CALL RSM_SQCLS(IRSSQF)
+C
+      RETURN
+      END
